@@ -24,15 +24,17 @@ def _schema_from_config(schema_config: List[Dict[str, Any]]) -> StructType:
 def ensure_silver_table(spark: SparkSession, config: Dict[str, Any]) -> None:
     """Create the silver Delta table if it does not already exist.
 
+    Uses spark.catalog.tableExists() instead of DeltaTable.isDeltaTable() to
+    avoid the low-level file scan that requires SELECT on any file — a
+    privilege Unity Catalog does not grant to regular users.
+
     Uses the schema defined in the YAML config so the table is always
     created with the correct column types before the first MERGE runs.
     Partitions by process_date when that column is present.
     """
-    from delta.tables import DeltaTable
-
     silver_table: str = config["silver_table"]
 
-    if DeltaTable.isDeltaTable(spark, silver_table):
+    if spark.catalog.tableExists(silver_table):
         _log.info("Silver table '%s' already exists — skipping creation", silver_table)
         return
 

@@ -72,9 +72,8 @@ def seed_bronze_customers(spark: SparkSession) -> None:
 
 def _ensure_audit_table(spark: SparkSession) -> None:
     """Create an empty audit Delta table so parallel entities can append safely."""
-    from delta.tables import DeltaTable
     audit_table = "silver.audit_log"
-    if not DeltaTable.isDeltaTable(spark, audit_table):
+    if not spark.catalog.tableExists(audit_table):
         spark.createDataFrame([], _AUDIT_SCHEMA).write.format("delta").saveAsTable(audit_table)
 
 
