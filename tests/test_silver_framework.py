@@ -5,6 +5,7 @@ and transformations using a local SparkSession.
 """
 
 from datetime import date, datetime
+from unittest.mock import MagicMock
 
 import pytest
 from pyspark.sql import SparkSession
@@ -19,6 +20,7 @@ from pyspark.sql.types import (
 )
 
 from silver_framework.dq_framework import apply_dq_checks
+from silver_framework.retry import with_retry
 from silver_framework.schema_enforcement import enforce_schema
 from silver_framework.silver_connector import apply_soft_delete, deduplicate
 from silver_framework.transformations import apply_transformations
@@ -294,3 +296,52 @@ class TestTransformations:
 
         assert result.collect()[0]["id"] == 42
         assert result.collect()[0]["name"] == "Bob"
+
+
+# ── Retry Decorator ───────────────────────────────────────────────────────────
+
+class TestRetry:
+    def test_retries_then_succeeds(self) -> None:
+        call_count = 0
+
+        @with_retry(max_retries=3, delay_seconds=0)
+        def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ValueError("transient error")
+            return "ok"
+
+        result = flaky()
+        assert result == "ok"
+        assert call_count == 3
+
+    def test_raises_after_max_retries(self) -> None:
+        mock_fn = MagicMock(side_effect=RuntimeError("permanent error"))
+
+        @with_retry(max_retries=3, delay_seconds=0)
+        def always_fails() -> None:
+            mock_fn()
+
+        with pytest.raises(RuntimeError, match="permanent error"):
+            always_fails()
+
+        assert mock_fn.call_count == 3
+
+    def test_succeeds_on_first_attempt_no_retry(self) -> None:
+        mock_fn = MagicMock(return_value="immediate")
+
+        @with_retry(max_retries=3, delay_seconds=0)
+        def succeeds() -> str:
+            return mock_fn()
+
+        result = succeeds()
+        assert result == "immediate"
+        assert mock_fn.call_count == 1
+
+    def test_preserves_function_name(self) -> None:
+        @with_retry(max_retries=2, delay_seconds=0)
+        def my_function() -> None:
+            pass
+
+        assert my_function.__name__ == "my_function"

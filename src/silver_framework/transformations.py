@@ -3,6 +3,10 @@ import re
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
+from silver_framework.logger import get_logger
+
+_log = get_logger("transformations")
+
 
 def normalize_column_names(df: DataFrame) -> DataFrame:
     """Rename all columns to snake_case."""
@@ -11,6 +15,7 @@ def normalize_column_names(df: DataFrame) -> DataFrame:
         snake = re.sub(r"[^a-z0-9_]", "_", snake)
         snake = re.sub(r"_+", "_", snake).strip("_")
         if col != snake:
+            _log.info("Renaming column '%s' → '%s'", col, snake)
             df = df.withColumnRenamed(col, snake)
     return df
 
@@ -24,6 +29,7 @@ def trim_strings(df: DataFrame) -> DataFrame:
 
 
 def apply_transformations(df: DataFrame) -> DataFrame:
+    _log.info("Normalizing column names and trimming strings")
     df = normalize_column_names(df)
     df = trim_strings(df)
     return df

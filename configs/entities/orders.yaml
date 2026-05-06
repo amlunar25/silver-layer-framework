@@ -1,0 +1,43 @@
+entity: orders
+bronze_table: bronze.orders
+silver_table: silver.orders
+audit_table: silver.audit_log
+
+schema:
+  - name: order_id
+    type: integer
+  - name: customer_id
+    type: integer
+  - name: amount
+    type: double
+  - name: status
+    type: string
+  - name: order_date
+    type: timestamp
+  - name: process_date
+    type: date
+  - name: is_deleted
+    type: boolean
+
+primary_keys:
+  - order_id
+
+deduplication:
+  order_by:
+    - column: order_date
+      direction: desc
+    - column: process_date
+      direction: desc
+
+soft_delete:
+  enabled: true
+  column: is_deleted
+  value: true
+
+dq_checks:
+  - column: order_id
+    type: not_null
+  - column: customer_id
+    type: not_null
+  - column: amount
+    type: not_null

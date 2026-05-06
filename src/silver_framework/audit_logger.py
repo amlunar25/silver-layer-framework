@@ -10,6 +10,10 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from silver_framework.logger import get_logger
+
+_log = get_logger("audit_logger")
+
 _AUDIT_SCHEMA = StructType([
     StructField("entity", StringType(), False),
     StructField("silver_table", StringType(), False),
@@ -31,9 +35,15 @@ def log_audit(
 ) -> None:
     """Append a single audit record to the audit Delta table."""
     audit_table: str = config["audit_table"]
+    entity: str = config.get("entity", "unknown")
+
+    _log.info(
+        "Writing audit record — entity='%s' status='%s' input=%d valid=%d invalid=%d",
+        entity, status, input_count, valid_count, invalid_count,
+    )
 
     row = [(
-        config["entity"],
+        entity,
         config["silver_table"],
         input_count,
         valid_count,
