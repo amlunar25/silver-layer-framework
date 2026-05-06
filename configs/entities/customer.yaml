@@ -1,0 +1,44 @@
+entity: customer
+bronze_table: bronze.customers
+silver_table: silver.customers
+audit_table: silver.audit_log
+
+schema:
+  - name: customer_id
+    type: integer
+  - name: email
+    type: string
+  - name: name
+    type: string
+  - name: phone
+    type: string
+  - name: updated_at
+    type: timestamp
+  - name: process_date
+    type: date
+  - name: is_deleted
+    type: boolean
+
+primary_keys:
+  - customer_id
+
+deduplication:
+  order_by:
+    - column: updated_at
+      direction: desc
+    - column: process_date
+      direction: desc
+
+soft_delete:
+  enabled: true
+  column: is_deleted
+  value: true
+
+dq_checks:
+  - column: customer_id
+    type: not_null
+  - column: email
+    type: not_null
+  - column: email
+    type: regex
+    pattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
