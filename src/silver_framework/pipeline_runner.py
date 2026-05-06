@@ -9,7 +9,7 @@ from silver_framework.config_loader import load_config
 from silver_framework.dq_framework import apply_dq_checks
 from silver_framework.logger import get_logger
 from silver_framework.schema_enforcement import enforce_schema
-from silver_framework.silver_connector import apply_soft_delete, deduplicate, upsert_to_silver
+from silver_framework.silver_connector import apply_soft_delete, deduplicate, ensure_silver_table, upsert_to_silver
 from silver_framework.transformations import apply_transformations
 
 
@@ -65,7 +65,7 @@ def run_entity(
 
     try:
         # ── Stage 1: Read Bronze ─────────────────────────────────────────────
-        log.info("Stage 1/7 — Reading Bronze: '%s'", config["bronze_table"])
+        log.info("Stage 1/8 — Reading Bronze: '%s'", config["bronze_table"])
         raw_df = read_bronze(spark, config, full_scan, extraction_start_date, extraction_end_date)
         _cache(raw_df, use_cache)
         input_count = raw_df.count()
@@ -73,14 +73,14 @@ def run_entity(
         log.info("Bronze records: %d", input_count)
 
         # ── Stage 2: Transform ───────────────────────────────────────────────
-        log.info("Stage 2/7 — Transforming")
+        log.info("Stage 2/8 — Transforming")
         transformed_df = apply_transformations(raw_df)
         _unpersist(raw_df, use_cache)
         raw_df = None
         _cache(transformed_df, use_cache)
 
         # ── Stage 3: Data Quality ────────────────────────────────────────────
-        log.info("Stage 3/7 — Running DQ checks")
+        log.info("Stage 3/8 — Running DQ checks")
         valid_df, invalid_df = apply_dq_checks(
             transformed_df, config.get("dq_checks", []), config["primary_keys"]
         )
@@ -95,19 +95,23 @@ def run_entity(
             log.warning("%d records quarantined for entity '%s'", invalid_count, entity)
 
         # ── Stage 4: Schema Enforcement ──────────────────────────────────────
-        log.info("Stage 4/7 — Enforcing schema")
+        log.info("Stage 4/8 — Enforcing schema")
         enforced_df = enforce_schema(valid_df, config["schema"])
 
         # ── Stage 5: Deduplicate ─────────────────────────────────────────────
-        log.info("Stage 5/7 — Deduplicating")
+        log.info("Stage 5/8 — Deduplicating")
         deduped_df = deduplicate(enforced_df, config)
 
         # ── Stage 6: Soft Delete ─────────────────────────────────────────────
-        log.info("Stage 6/7 — Applying soft delete filter")
+        log.info("Stage 6/8 — Applying soft delete filter")
         final_df = apply_soft_delete(deduped_df, config)
 
-        # ── Stage 7: Upsert ──────────────────────────────────────────────────
-        log.info("Stage 7/7 — Upserting to Silver: '%s'", config["silver_table"])
+        # ── Stage 7: Ensure Silver Table Exists ──────────────────────────────
+        log.info("Stage 7/8 — Ensuring silver table exists: '%s'", config["silver_table"])
+        ensure_silver_table(spark, config)
+
+        # ── Stage 8: Upsert ──────────────────────────────────────────────────
+        log.info("Stage 8/8 — Upserting to Silver: '%s'", config["silver_table"])
         upsert_to_silver(spark, final_df, config)
         log.info("Upserted %d records to '%s'", final_df.count(), config["silver_table"])
 
