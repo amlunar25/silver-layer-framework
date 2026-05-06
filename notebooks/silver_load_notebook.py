@@ -16,6 +16,7 @@ dbutils.widgets.dropdown("full_scan", "true", ["true", "false"], "Full Scan")
 dbutils.widgets.text("extraction_start_date", "", "Extraction Start Date (YYYY-MM-DD)")
 dbutils.widgets.text("extraction_end_date", "", "Extraction End Date (YYYY-MM-DD)")
 dbutils.widgets.text("max_workers", "4", "Max Parallel Workers")
+dbutils.widgets.dropdown("use_cache", "false", ["true", "false"], "Use Cache (disable on Serverless)")
 
 # COMMAND ----------
 
@@ -35,6 +36,7 @@ full_scan: bool = dbutils.widgets.get("full_scan").lower() == "true"
 extraction_start_date = dbutils.widgets.get("extraction_start_date") or None
 extraction_end_date = dbutils.widgets.get("extraction_end_date") or None
 max_workers = int(dbutils.widgets.get("max_workers"))
+use_cache: bool = dbutils.widgets.get("use_cache").lower() == "true"
 
 print(f"Entities to process: {config_paths}")
 print(f"full_scan={full_scan}  start={extraction_start_date}  end={extraction_end_date}")
@@ -48,6 +50,7 @@ results = run_entities_parallel(
     extraction_start_date=extraction_start_date,
     extraction_end_date=extraction_end_date,
     max_workers=max_workers,
+    use_cache=use_cache,
 )
 
 # COMMAND ----------

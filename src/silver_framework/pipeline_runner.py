@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 
 from silver_framework.audit_logger import log_audit
 from silver_framework.bronze_connector import read_bronze
@@ -13,14 +13,33 @@ from silver_framework.silver_connector import apply_soft_delete, deduplicate, up
 from silver_framework.transformations import apply_transformations
 
 
+def _cache(df: DataFrame, use_cache: bool) -> DataFrame:
+    """Cache df only when use_cache is True (not supported on Serverless)."""
+    if use_cache:
+        df.cache()
+    return df
+
+
+def _unpersist(df: Optional[DataFrame], use_cache: bool) -> None:
+    if use_cache and df is not None:
+        try:
+            df.unpersist()
+        except Exception:
+            pass
+
+
 def run_entity(
     spark: SparkSession,
     config_path: str,
     full_scan: bool = True,
     extraction_start_date: Optional[str] = None,
     extraction_end_date: Optional[str] = None,
+    use_cache: bool = True,
 ) -> Dict[str, Any]:
     """Run the full Bronze → Silver pipeline for a single entity.
+
+    Set use_cache=False on Databricks Serverless, which does not support
+    DataFrame.cache() / persist().
 
     Returns a result dict with keys: entity, status, input_count, valid_count,
     invalid_count, error.
@@ -28,6 +47,9 @@ def run_entity(
     config = load_config(config_path)
     entity: str = config["entity"]
     log = get_logger(entity)
+
+    if not use_cache:
+        log.info("Caching disabled (Serverless mode)")
 
     result: Dict[str, Any] = {
         "entity": entity,
@@ -45,8 +67,7 @@ def run_entity(
         # ── Stage 1: Read Bronze ─────────────────────────────────────────────
         log.info("Stage 1/7 — Reading Bronze: '%s'", config["bronze_table"])
         raw_df = read_bronze(spark, config, full_scan, extraction_start_date, extraction_end_date)
-        # Cache before count so the scan is reused by apply_transformations
-        raw_df.cache()
+        _cache(raw_df, use_cache)
         input_count = raw_df.count()
         result["input_count"] = input_count
         log.info("Bronze records: %d", input_count)
@@ -54,17 +75,16 @@ def run_entity(
         # ── Stage 2: Transform ───────────────────────────────────────────────
         log.info("Stage 2/7 — Transforming")
         transformed_df = apply_transformations(raw_df)
-        raw_df.unpersist()
+        _unpersist(raw_df, use_cache)
         raw_df = None
-        # Cache before DQ — multiple checks each re-scan this DataFrame
-        transformed_df.cache()
+        _cache(transformed_df, use_cache)
 
         # ── Stage 3: Data Quality ────────────────────────────────────────────
         log.info("Stage 3/7 — Running DQ checks")
         valid_df, invalid_df = apply_dq_checks(
             transformed_df, config.get("dq_checks", []), config["primary_keys"]
         )
-        transformed_df.unpersist()
+        _unpersist(transformed_df, use_cache)
         transformed_df = None
         valid_count = valid_df.count()
         invalid_count = invalid_df.count()
@@ -105,16 +125,8 @@ def run_entity(
             log.error("Could not write FAILED audit record: %s", audit_exc)
 
     finally:
-        if raw_df is not None:
-            try:
-                raw_df.unpersist()
-            except Exception:
-                pass
-        if transformed_df is not None:
-            try:
-                transformed_df.unpersist()
-            except Exception:
-                pass
+        _unpersist(raw_df, use_cache)
+        _unpersist(transformed_df, use_cache)
 
     return result
 
@@ -126,8 +138,12 @@ def run_entities_parallel(
     extraction_start_date: Optional[str] = None,
     extraction_end_date: Optional[str] = None,
     max_workers: int = 4,
+    use_cache: bool = True,
 ) -> List[Dict[str, Any]]:
     """Run multiple entity pipelines concurrently.
+
+    Set use_cache=False on Databricks Serverless, which does not support
+    DataFrame.cache() / persist().
 
     One entity's failure never blocks the others. Returns a list of result
     dicts (one per entity) after all have finished.
@@ -135,8 +151,8 @@ def run_entities_parallel(
     log = get_logger("pipeline_runner")
     effective_workers = min(max_workers, len(config_paths))
     log.info(
-        "Starting parallel run — %d entities, %d workers: %s",
-        len(config_paths), effective_workers, config_paths,
+        "Starting parallel run — %d entities, %d workers, use_cache=%s: %s",
+        len(config_paths), effective_workers, use_cache, config_paths,
     )
 
     results: List[Dict[str, Any]] = []
@@ -144,7 +160,8 @@ def run_entities_parallel(
     with ThreadPoolExecutor(max_workers=effective_workers) as executor:
         futures = {
             executor.submit(
-                run_entity, spark, path, full_scan, extraction_start_date, extraction_end_date
+                run_entity, spark, path, full_scan,
+                extraction_start_date, extraction_end_date, use_cache,
             ): path
             for path in config_paths
         }
