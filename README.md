@@ -34,6 +34,72 @@ needed to onboard a new entity.
 
 ---
 
+## Transformations
+
+Applied automatically to every entity before DQ checks. No YAML configuration required.
+
+### Column Name Normalisation (`normalize_column_names`)
+
+Renames every column to `snake_case` using the following rules applied in order:
+
+| Step | Rule | Example |
+|------|------|---------|
+| 1 | Insert `_` before an uppercase letter that follows a lowercase letter or digit | `customerId` → `customer_Id` |
+| 2 | Lowercase the whole name | `customer_Id` → `customer_id` |
+| 3 | Replace any character that is not `a-z`, `0-9`, or `_` with `_` | `first-name` → `first_name` |
+| 4 | Collapse consecutive underscores and strip leading/trailing ones | `__col__` → `col` |
+
+### String Trimming (`trim_strings`)
+
+Applies `F.trim()` to every column with `StringType`. Non-string columns (integers, timestamps, booleans, etc.) are left untouched.
+
+---
+
+## Data Quality (DQ) Checks
+
+DQ checks are declared per-column in the YAML config under `dq_checks`. Records that fail **any** check are excluded from the silver table and written to a quarantine DataFrame carrying a `_dq_failed_check` column (`<type>:<column>`). Exclusion is done by primary key — if any row for a key fails a check, all rows for that key are quarantined.
+
+### Available check types
+
+#### `not_null`
+
+Flags records where the target column is `null`.
+
+```yaml
+dq_checks:
+  - column: customer_id
+    type: not_null
+```
+
+#### `regex`
+
+Flags records where the target column is `null` **or** does not match the provided regular expression pattern.
+
+```yaml
+dq_checks:
+  - column: email
+    type: regex
+    pattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
+```
+
+> **Note:** JSON-escape backslashes in YAML strings (`\\d` not `\d`).
+
+### Quarantine output
+
+| Column | Description |
+|--------|-------------|
+| All source columns | Original values from the bronze record |
+| `_dq_failed_check` | Label of the first failing check: `<type>:<column>` (e.g. `regex:email`, `not_null:customer_id`) |
+
+### Join strategy
+
+| Invalid key count | Join used |
+|---|---|
+| ≤ 10 000 (default threshold) | Broadcast join — avoids a shuffle for small quarantine sets |
+| > 10 000 | Shuffle join |
+
+---
+
 ## Project Structure
 
 ```
@@ -89,6 +155,181 @@ The script will:
 ```bash
 pytest tests/ -v
 ```
+
+The test suite uses a local `SparkSession` (`local[1]`) — no Databricks environment needed.
+
+---
+
+## Test Suite
+
+### Running the notebooks on Databricks
+
+The three notebooks in `notebooks/` form an end-to-end test of the full pipeline against real Delta tables. Run them in the order below, or let `03_silver_load` call the setup notebooks automatically.
+
+#### Prerequisites
+
+1. Upload the project to your Databricks workspace, e.g.:
+   ```
+   /Workspace/Users/<your-email>/silver-layer-framework/
+   ```
+2. Confirm the catalogs referenced in the YAML configs exist and your user has `CREATE SCHEMA` and `CREATE TABLE` privileges on them.
+
+---
+
+#### Step 1 — Create the customer bronze table
+
+Open `notebooks/01_bronze_customer` and set the widgets:
+
+| Widget | Default | Description |
+|--------|---------|-------------|
+| `config_path` | `configs/entities/customer.yaml` | YAML that defines `bronze_table`, `silver_table`, and `audit_table` |
+| `project_root` | `/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework` | Absolute workspace path to the project root |
+
+**Run all cells.** The notebook will:
+- Create the bronze and silver schemas if they do not exist
+- Create the `audit_log` Delta table if it does not exist
+- Write 6 sample rows to `bronze_table` (duplicates, invalid email, soft-deleted record)
+- Display the bronze table contents
+
+---
+
+#### Step 2 — Create the orders bronze table
+
+Open `notebooks/02_bronze_orders` and set the widgets:
+
+| Widget | Default | Description |
+|--------|---------|-------------|
+| `config_path` | `configs/entities/orders.yaml` | YAML that defines the orders tables |
+| `project_root` | `/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework` | Absolute workspace path to the project root |
+
+**Run all cells.** The notebook will:
+- Create the bronze schema if it does not exist
+- Generate orders via a loop: 20 base orders × 2 rows (latest + older duplicate) + 6 DQ failure rows
+- Write all rows to `bronze_table`
+- Display the bronze table contents
+
+---
+
+#### Step 3 — Run the silver pipeline
+
+Open `notebooks/03_silver_load` and set the widgets:
+
+| Widget | Default | Description |
+|--------|---------|-------------|
+| `customer_config_path` | `configs/entities/customer.yaml` | Customer entity config |
+| `orders_config_path` | `configs/entities/orders.yaml` | Orders entity config |
+| `project_root` | `/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework` | Absolute workspace path to the project root |
+| `run_setup` | `false` | Set to `true` to call notebooks 01 and 02 automatically before running the pipeline |
+| `drop_silver_tables` | `true` | Drop silver tables before the run so each execution starts clean |
+| `max_workers` | `4` | Number of parallel threads for entity execution |
+| `use_cache` | `false` | Disable on Databricks Serverless (no `cache()` / `persist()` support) |
+| `customer_full_scan` | `true` | `false` runs incremental using the date range below |
+| `customer_start_date` | _(empty)_ | Incremental start date for customer (`YYYY-MM-DD`) |
+| `customer_end_date` | _(empty)_ | Incremental end date for customer (`YYYY-MM-DD`) |
+| `orders_full_scan` | `true` | `false` runs incremental using the date range below |
+| `orders_start_date` | _(empty)_ | Incremental start date for orders (`YYYY-MM-DD`) |
+| `orders_end_date` | _(empty)_ | Incremental end date for orders (`YYYY-MM-DD`) |
+
+**Run all cells.** The notebook will:
+1. Optionally run notebooks 01 and 02 (when `run_setup = true`), passing `config_path` and `project_root` as arguments
+2. Drop the silver tables if `drop_silver_tables = true`
+3. Execute the customer and orders pipelines in parallel, each with its own scan mode
+4. Display bronze and silver tables for both entities, plus the audit log
+
+#### Expected results after a full-scan run
+
+| Entity | Bronze rows | Silver rows | Quarantined |
+|--------|------------|-------------|-------------|
+| customer | 6 | 3 (ids 1, 4, 5) | 1 (invalid email) + 1 (soft-deleted) |
+| orders | 46 | 16 | 4 (null fields) + 4 (soft-deleted) |
+
+---
+
+### Running the unit tests locally
+
+All tests live in `tests/test_silver_framework.py` and are organized by module.
+
+### Fixture
+
+| Fixture | Scope | Description |
+|---------|-------|-------------|
+| `spark` | `session` | Single local SparkSession shared across all tests (`local[1]`) |
+
+---
+
+### TestDQFramework
+
+Tests for `silver_framework.dq_framework.apply_dq_checks`.
+
+| Test | Description |
+|------|-------------|
+| `test_not_null_splits_valid_and_invalid` | Records with a null column go to the invalid DataFrame; non-null records go to valid |
+| `test_regex_splits_valid_and_invalid` | Records failing a regex pattern are quarantined; matching records pass |
+| `test_multiple_checks_union_failures` | A record failing any single check is quarantined; only records passing all checks are valid |
+| `test_empty_checks_returns_all_valid` | When no DQ checks are configured, all records are returned as valid |
+| `test_invalid_df_contains_failed_check_column` | Quarantined records include a `_dq_failed_check` column with the label `<type>:<column>` |
+
+---
+
+### TestSchemaEnforcement
+
+Tests for `silver_framework.schema_enforcement.enforce_schema`.
+
+| Test | Description |
+|------|-------------|
+| `test_cast_string_to_integer` | String column is cast to integer with correct value |
+| `test_adds_missing_column_as_null` | Columns declared in the schema but absent from the DataFrame are added as `null` |
+| `test_drops_extra_columns` | Columns present in the DataFrame but not declared in the schema are removed |
+| `test_preserves_column_order` | Output column order matches the order declared in the schema |
+
+---
+
+### TestDeduplication
+
+Tests for `silver_framework.silver_connector.deduplicate`.
+
+| Test | Description |
+|------|-------------|
+| `test_keeps_latest_record_per_key` | For duplicate primary keys, only the row with the most recent `updated_at` is kept |
+| `test_no_row_num_column_in_output` | The internal `_row_num` window column is not present in the final output |
+| `test_single_record_per_key_unchanged` | A DataFrame with no duplicates is returned as-is |
+
+---
+
+### TestSoftDelete
+
+Tests for `silver_framework.silver_connector.apply_soft_delete`.
+
+| Test | Description |
+|------|-------------|
+| `test_removes_deleted_records` | Rows where the soft-delete column equals the configured value are filtered out |
+| `test_disabled_returns_all_records` | When `soft_delete.enabled = false`, no rows are filtered |
+| `test_no_soft_delete_config_returns_all_records` | When the `soft_delete` key is absent from the config, all rows are returned |
+
+---
+
+### TestTransformations
+
+Tests for `silver_framework.transformations.apply_transformations`.
+
+| Test | Description |
+|------|-------------|
+| `test_normalizes_camel_case_columns` | CamelCase column names are converted to `snake_case` |
+| `test_trims_string_columns` | Leading and trailing whitespace is removed from string columns |
+| `test_non_string_columns_untouched` | Non-string columns (e.g. integers) are not modified |
+
+---
+
+### TestRetry
+
+Tests for `silver_framework.retry.with_retry`.
+
+| Test | Description |
+|------|-------------|
+| `test_retries_then_succeeds` | A transiently failing function is retried and eventually succeeds |
+| `test_raises_after_max_retries` | After exhausting all retries, the original exception is re-raised |
+| `test_succeeds_on_first_attempt_no_retry` | A function that succeeds immediately is called exactly once |
+| `test_preserves_function_name` | The decorator preserves the wrapped function's `__name__` via `functools.wraps` |
 
 ---
 

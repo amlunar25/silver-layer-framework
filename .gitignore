@@ -11,3 +11,4 @@ build/
 /spark-warehouse/
 metastore_db/
 derby.log
+Claude.md

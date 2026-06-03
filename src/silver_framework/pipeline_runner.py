@@ -38,6 +38,9 @@ def run_entity(
 ) -> Dict[str, Any]:
     """Run the full Bronze → Silver pipeline for a single entity.
 
+    All table references (bronze_table, silver_table, audit_table) are read
+    directly from the YAML config at config_path — no overrides needed.
+
     Set use_cache=False on Databricks Serverless, which does not support
     DataFrame.cache() / persist().
 
@@ -144,7 +147,10 @@ def run_entities_parallel(
     max_workers: int = 4,
     use_cache: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Run multiple entity pipelines concurrently.
+    """Run multiple entity pipelines concurrently with the same scan settings.
+
+    For per-entity scan settings (mixed full/incremental), call run_entity
+    directly for each entity and manage concurrency in the caller.
 
     Set use_cache=False on Databricks Serverless, which does not support
     DataFrame.cache() / persist().
@@ -186,7 +192,7 @@ def run_entities_parallel(
                 log.error("Entity '%s' — FAILED: %s", result["entity"], result.get("error"))
 
     succeeded = [r for r in results if r["status"] == "SUCCESS"]
-    failed = [r for r in results if r["status"] == "FAILED"]
+    failed    = [r for r in results if r["status"] == "FAILED"]
     log.info(
         "Pipeline complete — %d succeeded, %d failed",
         len(succeeded), len(failed),

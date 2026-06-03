@@ -1,5 +1,5 @@
 entity: orders
-bronze_table: bronze_sandbox.test_silver..orders
+bronze_table: bronze_sandbox.test_silver.orders
 silver_table: silver_sandbox.test_silver.orders
 audit_table: silver_sandbox.test_silver.audit_log
 
