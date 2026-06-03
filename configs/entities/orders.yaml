@@ -1,7 +1,7 @@
 entity: orders
-bronze_table: bronze.orders
-silver_table: silver.orders
-audit_table: silver.audit_log
+bronze_table: bronze_sandbox.test_silver..orders
+silver_table: silver_sandbox.test_silver.orders
+audit_table: silver_sandbox.test_silver.audit_log
 
 schema:
   - name: order_id

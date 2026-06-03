@@ -1,12 +1,54 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
+from pyspark.sql.types import StructField, StructType
 
 from silver_framework.logger import get_logger
 from silver_framework.retry import with_retry
+from silver_framework.schema_enforcement import _TYPE_MAP
 
 _log = get_logger("silver_connector")
+
+
+def _schema_from_config(schema_config: List[Dict[str, Any]]) -> StructType:
+    """Build a Spark StructType from the YAML schema definition."""
+    from pyspark.sql.types import StringType
+    fields = [
+        StructField(f["name"], _TYPE_MAP.get(f["type"].lower(), StringType()), True)
+        for f in schema_config
+    ]
+    return StructType(fields)
+
+
+def ensure_silver_table(spark: SparkSession, config: Dict[str, Any]) -> None:
+    """Create the silver Delta table if it does not already exist.
+
+    Uses spark.catalog.tableExists() instead of DeltaTable.isDeltaTable() to
+    avoid the low-level file scan that requires SELECT on any file — a
+    privilege Unity Catalog does not grant to regular users.
+
+    Uses the schema defined in the YAML config so the table is always
+    created with the correct column types before the first MERGE runs.
+    Partitions by process_date when that column is present.
+    """
+    silver_table: str = config["silver_table"]
+
+    if spark.catalog.tableExists(silver_table):
+        _log.info("Silver table '%s' already exists — skipping creation", silver_table)
+        return
+
+    _log.info("Creating silver table '%s'", silver_table)
+    schema = _schema_from_config(config["schema"])
+    writer = spark.createDataFrame([], schema).write.format("delta")
+
+    partition_col = next((f["name"] for f in config["schema"] if f["name"] == "process_date"), None)
+    if partition_col:
+        _log.info("Partitioning by '%s'", partition_col)
+        writer = writer.partitionBy(partition_col)
+
+    writer.saveAsTable(silver_table)
+    _log.info("Silver table '%s' created successfully", silver_table)
 
 
 def deduplicate(df: DataFrame, config: Dict[str, Any]) -> DataFrame:
@@ -49,8 +91,7 @@ def upsert_to_silver(
 ) -> None:
     """MERGE incoming records into the silver Delta table.
 
-    On first run (table does not yet exist) the table is created and
-    partitioned by process_date when that column is present in the schema.
+    Assumes ensure_silver_table has already been called so the table exists.
     """
     from delta.tables import DeltaTable
 
@@ -63,20 +104,12 @@ def upsert_to_silver(
     update_set = {col: f"source.{col}" for col in df.columns}
     insert_values = {col: f"source.{col}" for col in df.columns}
 
-    if DeltaTable.isDeltaTable(spark, silver_table):
-        _log.info("MERGE INTO '%s' on keys %s", silver_table, primary_keys)
-        (
-            DeltaTable.forName(spark, silver_table)
-            .alias("target")
-            .merge(df.alias("source"), merge_condition)
-            .whenMatchedUpdate(set=update_set)
-            .whenNotMatchedInsert(values=insert_values)
-            .execute()
-        )
-    else:
-        _log.info("Table '%s' does not exist — creating via initial write", silver_table)
-        writer = df.write.format("delta")
-        if "process_date" in df.columns:
-            _log.info("Partitioning by 'process_date'")
-            writer = writer.partitionBy("process_date")
-        writer.saveAsTable(silver_table)
+    _log.info("MERGE INTO '%s' on keys %s", silver_table, primary_keys)
+    (
+        DeltaTable.forName(spark, silver_table)
+        .alias("target")
+        .merge(df.alias("source"), merge_condition)
+        .whenMatchedUpdate(set=update_set)
+        .whenNotMatchedInsert(values=insert_values)
+        .execute()
+    )
