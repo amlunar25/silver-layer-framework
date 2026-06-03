@@ -150,6 +150,7 @@ entity_runs: list[Dict[str, Any]] = [
         "extraction_end_date":   orders_end_date,
     },
 ]
+entity_runs
 
 # COMMAND ----------
 
