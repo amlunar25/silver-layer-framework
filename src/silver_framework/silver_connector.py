@@ -78,6 +78,11 @@ def apply_soft_delete(df: DataFrame, config: Dict[str, Any]) -> DataFrame:
         return df
 
     col_name: str = sd_config["column"]
+
+    if col_name not in df.columns:
+        _log.warning("Soft delete column '%s' not found in DataFrame — skipping", col_name)
+        return df
+
     delete_value = sd_config["value"]
     _log.info("Filtering out records where %s = %s", col_name, delete_value)
     return df.filter(F.col(col_name) != F.lit(delete_value))

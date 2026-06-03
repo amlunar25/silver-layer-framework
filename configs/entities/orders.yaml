@@ -3,6 +3,10 @@ bronze_table: bronze_sandbox.test_silver.orders
 silver_table: silver_sandbox.test_silver.orders
 audit_table: silver_sandbox.test_silver.audit_log
 
+extraction:
+  mode: incremental        # full_scan | incremental
+  filter_column: process_date
+
 schema:
   - name: order_id
     type: integer

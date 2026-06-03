@@ -26,14 +26,17 @@ dbutils.widgets.text("max_workers",             "4",                       "Max 
 dbutils.widgets.dropdown("use_cache",          "false", ["true", "false"], "Use Cache (disable on Serverless)")
 
 # ── Customer scan settings ────────────────────────────────────────────────────
-dbutils.widgets.dropdown("customer_full_scan", "true", ["true", "false"], "Customer – Full Scan")
-dbutils.widgets.text("customer_start_date",    "",                        "Customer – Extraction Start Date (YYYY-MM-DD)")
-dbutils.widgets.text("customer_end_date",      "",                        "Customer – Extraction End Date (YYYY-MM-DD)")
+# "config" = use extraction.mode declared in the YAML (recommended default)
+# "true"   = force full scan regardless of YAML
+# "false"  = force incremental regardless of YAML
+dbutils.widgets.dropdown("customer_full_scan", "config", ["config", "true", "false"], "Customer – Full Scan Override")
+dbutils.widgets.text("customer_start_date",    "",                                    "Customer – Extraction Start Date (YYYY-MM-DD)")
+dbutils.widgets.text("customer_end_date",      "",                                    "Customer – Extraction End Date (YYYY-MM-DD)")
 
 # ── Orders scan settings ──────────────────────────────────────────────────────
-dbutils.widgets.dropdown("orders_full_scan", "true", ["true", "false"], "Orders – Full Scan")
-dbutils.widgets.text("orders_start_date",    "",                        "Orders – Extraction Start Date (YYYY-MM-DD)")
-dbutils.widgets.text("orders_end_date",      "",                        "Orders – Extraction End Date (YYYY-MM-DD)")
+dbutils.widgets.dropdown("orders_full_scan", "config", ["config", "true", "false"], "Orders – Full Scan Override")
+dbutils.widgets.text("orders_start_date",    "",                                    "Orders – Extraction Start Date (YYYY-MM-DD)")
+dbutils.widgets.text("orders_end_date",      "",                                    "Orders – Extraction End Date (YYYY-MM-DD)")
 
 # COMMAND ----------
 
@@ -67,11 +70,21 @@ drop_silver  = dbutils.widgets.get("drop_silver_tables").lower() == "true"
 max_workers  = int(dbutils.widgets.get("max_workers"))
 use_cache    = dbutils.widgets.get("use_cache").lower() == "true"
 
-customer_full_scan  = dbutils.widgets.get("customer_full_scan").lower() == "true"
+def _parse_scan_override(value: str):
+    """Map widget value to run_entity full_scan argument.
+    'config' → None  (entity uses its own YAML extraction.mode)
+    'true'   → True  (force full scan)
+    'false'  → False (force incremental)
+    """
+    if value == "config":
+        return None
+    return value == "true"
+
+customer_full_scan  = _parse_scan_override(dbutils.widgets.get("customer_full_scan"))
 customer_start_date = dbutils.widgets.get("customer_start_date") or None
 customer_end_date   = dbutils.widgets.get("customer_end_date")   or None
 
-orders_full_scan  = dbutils.widgets.get("orders_full_scan").lower() == "true"
+orders_full_scan  = _parse_scan_override(dbutils.widgets.get("orders_full_scan"))
 orders_start_date = dbutils.widgets.get("orders_start_date") or None
 orders_end_date   = dbutils.widgets.get("orders_end_date")   or None
 
@@ -79,8 +92,13 @@ orders_end_date   = dbutils.widgets.get("orders_end_date")   or None
 customer_cfg = load_config(resolve_config_path(customer_config_path))
 orders_cfg   = load_config(resolve_config_path(orders_config_path))
 
-print(f"Customer : table={customer_cfg['bronze_table']}  full_scan={customer_full_scan}  start={customer_start_date}  end={customer_end_date}")
-print(f"Orders   : table={orders_cfg['bronze_table']}  full_scan={orders_full_scan}  start={orders_start_date}  end={orders_end_date}")
+def _scan_label(override, cfg):
+    if override is None:
+        return f"config ({cfg.get('extraction', {}).get('mode', 'full_scan')})"
+    return "full_scan" if override else "incremental"
+
+print(f"Customer : table={customer_cfg['bronze_table']}  mode={_scan_label(customer_full_scan, customer_cfg)}  start={customer_start_date}  end={customer_end_date}")
+print(f"Orders   : table={orders_cfg['bronze_table']}  mode={_scan_label(orders_full_scan, orders_cfg)}  start={orders_start_date}  end={orders_end_date}")
 print(f"Options  : run_setup={run_setup}  drop_silver={drop_silver}  max_workers={max_workers}  use_cache={use_cache}")
 
 # COMMAND ----------
@@ -120,13 +138,13 @@ if drop_silver:
 # ── Per-entity pipeline configuration ─────────────────────────────────────────
 entity_runs: list[Dict[str, Any]] = [
     {
-        "config_path":           customer_config_path,
+        "config_path":           resolve_config_path(customer_config_path),
         "full_scan":             customer_full_scan,
         "extraction_start_date": customer_start_date,
         "extraction_end_date":   customer_end_date,
     },
     {
-        "config_path":           orders_config_path,
+        "config_path":           resolve_config_path(orders_config_path),
         "full_scan":             orders_full_scan,
         "extraction_start_date": orders_start_date,
         "extraction_end_date":   orders_end_date,

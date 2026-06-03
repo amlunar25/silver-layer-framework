@@ -100,6 +100,52 @@ dq_checks:
 
 ---
 
+## Incremental Processing
+
+### YAML configuration
+
+Each entity declares its extraction behaviour in the `extraction` block:
+
+```yaml
+extraction:
+  mode: incremental      # full_scan | incremental
+  filter_column: process_date
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `mode` | Yes | `full_scan` loads all bronze rows; `incremental` applies a date filter |
+| `filter_column` | Yes | Column used to filter rows in incremental mode (typically `process_date` or `updated_at`) |
+
+### Scan mode resolution
+
+The effective scan mode is resolved in this order of priority:
+
+| Priority | Source | When it applies |
+|----------|--------|-----------------|
+| 1 | Widget override (`true` / `false`) | Explicit override in `03_silver_load` |
+| 2 | `extraction.mode` in YAML | Widget is set to `config` (default) |
+
+### Auto-detection of `start_date`
+
+When an entity runs in incremental mode and no `start_date` is provided, the pipeline automatically derives the window start by querying `MAX(filter_column)` from the silver table:
+
+```
+incremental mode, no start_date
+        │
+        ├── silver table exists and has data
+        │       └── start_date = MAX(filter_column)   ← incremental run
+        │
+        └── silver table missing or empty
+                └── fall back to full scan             ← first run or reset
+```
+
+This means a newly onboarded entity automatically runs a full load on the first execution and switches to incremental on every subsequent run — no manual date management required.
+
+> **Re-processing safety:** `start_date` is applied as `filter_column >= start_date` (inclusive), so records at the boundary are always re-evaluated. Because the silver write uses MERGE INTO, re-processing an existing record is safe — it will be updated in place rather than duplicated.
+
+---
+
 ## Project Structure
 
 ```
@@ -223,18 +269,19 @@ Open `notebooks/03_silver_load` and set the widgets:
 | `drop_silver_tables` | `true` | Drop silver tables before the run so each execution starts clean |
 | `max_workers` | `4` | Number of parallel threads for entity execution |
 | `use_cache` | `false` | Disable on Databricks Serverless (no `cache()` / `persist()` support) |
-| `customer_full_scan` | `true` | `false` runs incremental using the date range below |
-| `customer_start_date` | _(empty)_ | Incremental start date for customer (`YYYY-MM-DD`) |
-| `customer_end_date` | _(empty)_ | Incremental end date for customer (`YYYY-MM-DD`) |
-| `orders_full_scan` | `true` | `false` runs incremental using the date range below |
-| `orders_start_date` | _(empty)_ | Incremental start date for orders (`YYYY-MM-DD`) |
-| `orders_end_date` | _(empty)_ | Incremental end date for orders (`YYYY-MM-DD`) |
+| `customer_full_scan` | `config` | `config` = use `extraction.mode` from YAML; `true` = force full scan; `false` = force incremental |
+| `customer_start_date` | _(empty)_ | Incremental start date for customer (`YYYY-MM-DD`). Leave empty to auto-detect from `MAX(filter_column)` |
+| `customer_end_date` | _(empty)_ | Incremental end date for customer (`YYYY-MM-DD`, optional upper bound) |
+| `orders_full_scan` | `config` | `config` = use `extraction.mode` from YAML; `true` = force full scan; `false` = force incremental |
+| `orders_start_date` | _(empty)_ | Incremental start date for orders (`YYYY-MM-DD`). Leave empty to auto-detect from `MAX(filter_column)` |
+| `orders_end_date` | _(empty)_ | Incremental end date for orders (`YYYY-MM-DD`, optional upper bound) |
 
 **Run all cells.** The notebook will:
 1. Optionally run notebooks 01 and 02 (when `run_setup = true`), passing `config_path` and `project_root` as arguments
 2. Drop the silver tables if `drop_silver_tables = true`
-3. Execute the customer and orders pipelines in parallel, each with its own scan mode
-4. Display bronze and silver tables for both entities, plus the audit log
+3. Resolve each entity's scan mode (YAML default or widget override) and auto-detect `start_date` from the silver table when not provided
+4. Execute the customer and orders pipelines in parallel, each with its own scan settings
+5. Display bronze and silver tables for both entities, plus the audit log
 
 #### Expected results after a full-scan run
 
@@ -342,9 +389,13 @@ Tests for `silver_framework.retry.with_retry`.
 
 ```yaml
 entity: <entity_name>
-bronze_table: bronze.<table>
-silver_table: silver.<table>
-audit_table: silver.audit_log
+bronze_table: <catalog>.<schema>.<table>
+silver_table: <catalog>.<schema>.<table>
+audit_table: <catalog>.<schema>.audit_log
+
+extraction:
+  mode: full_scan          # full_scan | incremental
+  filter_column: process_date  # column used for date filtering in incremental mode
 
 schema:
   - name: <col>
@@ -373,10 +424,16 @@ dq_checks:
 
 ### Running the notebook for a new entity
 
-In the Databricks widget, set:
-- `config_path` → `configs/entities/<entity_name>.yaml`
-- `full_scan` → `true` or `false`
-- `extraction_start_date` / `extraction_end_date` → for incremental loads
+In `03_silver_load`, add the new config path to the relevant widget and set the scan override:
+
+| Widget | Recommended value | Notes |
+|--------|-------------------|-------|
+| `<entity>_config_path` | `configs/entities/<entity_name>.yaml` | Path to the new YAML |
+| `<entity>_full_scan` | `config` | Let the YAML `extraction.mode` decide |
+| `<entity>_start_date` | _(empty)_ | Auto-detected from `MAX(filter_column)` on incremental runs |
+| `<entity>_end_date` | _(empty)_ | Leave empty unless you need to cap the window |
+
+On the **first run** the silver table will be empty, so auto-detection returns nothing and the pipeline falls back to a full scan automatically.
 
 ---
 

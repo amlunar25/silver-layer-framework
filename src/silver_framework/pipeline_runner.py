@@ -13,6 +13,33 @@ from silver_framework.silver_connector import apply_soft_delete, deduplicate, en
 from silver_framework.transformations import apply_transformations
 
 
+def _resolve_incremental_start_date(
+    spark: SparkSession,
+    config: Dict[str, Any],
+    log: Any,
+) -> Optional[str]:
+    """Return MAX(filter_column) from the silver table as a YYYY-MM-DD string.
+
+    Returns None when the table does not exist or is empty, signalling that the
+    caller should fall back to a full scan.
+    """
+    silver_table  = config["silver_table"]
+    filter_column = config.get("extraction", {}).get("filter_column", "process_date")
+
+    if not spark.catalog.tableExists(silver_table):
+        log.info("Silver table '%s' does not exist — cannot derive start_date", silver_table)
+        return None
+
+    row = spark.sql(f"SELECT MAX({filter_column}) AS max_date FROM {silver_table}").collect()[0]
+    if row["max_date"] is None:
+        log.info("Silver table '%s' is empty — cannot derive start_date", silver_table)
+        return None
+
+    start_date = str(row["max_date"])[:10]   # normalise date/timestamp → YYYY-MM-DD
+    log.info("Auto-detected start_date='%s' from MAX(%s) in '%s'", start_date, filter_column, silver_table)
+    return start_date
+
+
 def _cache(df: DataFrame, use_cache: bool) -> DataFrame:
     """Cache df only when use_cache is True (not supported on Serverless)."""
     if use_cache:
@@ -31,7 +58,7 @@ def _unpersist(df: Optional[DataFrame], use_cache: bool) -> None:
 def run_entity(
     spark: SparkSession,
     config_path: str,
-    full_scan: bool = True,
+    full_scan: Optional[bool] = None,
     extraction_start_date: Optional[str] = None,
     extraction_end_date: Optional[str] = None,
     use_cache: bool = True,
@@ -41,6 +68,11 @@ def run_entity(
     All table references (bronze_table, silver_table, audit_table) are read
     directly from the YAML config at config_path — no overrides needed.
 
+    full_scan controls the extraction mode:
+      - None  → use extraction.mode from the YAML config (default)
+      - True  → force a full scan regardless of the YAML setting
+      - False → force incremental regardless of the YAML setting
+
     Set use_cache=False on Databricks Serverless, which does not support
     DataFrame.cache() / persist().
 
@@ -48,8 +80,25 @@ def run_entity(
     invalid_count, error.
     """
     config = load_config(config_path)
+
+    # Resolve extraction mode: explicit runtime value overrides the YAML default
+    if full_scan is None:
+        full_scan = config.get("extraction", {}).get("mode", "full_scan") == "full_scan"
+        log_source = "config"
+    else:
+        log_source = "override"
+
     entity: str = config["entity"]
     log = get_logger(entity)
+    log.info("Extraction mode: full_scan=%s (source=%s)", full_scan, log_source)
+
+    # For incremental mode with no explicit start_date, derive it from the silver table.
+    # Falls back to a full scan when the silver table is missing or empty.
+    if not full_scan and extraction_start_date is None:
+        extraction_start_date = _resolve_incremental_start_date(spark, config, log)
+        if extraction_start_date is None:
+            log.warning("No start_date available — falling back to full scan for entity '%s'", entity)
+            full_scan = True
 
     if not use_cache:
         log.info("Caching disabled (Serverless mode)")
@@ -141,16 +190,21 @@ def run_entity(
 def run_entities_parallel(
     spark: SparkSession,
     config_paths: List[str],
-    full_scan: bool = True,
+    full_scan: Optional[bool] = None,
     extraction_start_date: Optional[str] = None,
     extraction_end_date: Optional[str] = None,
     max_workers: int = 4,
     use_cache: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Run multiple entity pipelines concurrently with the same scan settings.
+    """Run multiple entity pipelines concurrently.
 
-    For per-entity scan settings (mixed full/incremental), call run_entity
-    directly for each entity and manage concurrency in the caller.
+    full_scan applies to all entities:
+      - None  → each entity uses its own extraction.mode from YAML (recommended)
+      - True  → force full scan for all entities
+      - False → force incremental for all entities
+
+    For per-entity scan overrides, call run_entity directly for each entity
+    and manage concurrency in the caller.
 
     Set use_cache=False on Databricks Serverless, which does not support
     DataFrame.cache() / persist().
