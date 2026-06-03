@@ -1,7 +1,7 @@
 entity: customer
-bronze_table: bronze.customers
-silver_table: silver.customers
-audit_table: silver.audit_log
+bronze_table: bronze_sandbox.test_silver.customer
+silver_table: silver_sandbox.test_silver.customer
+audit_table: silver_sandbox.test_silver.audit_log
 
 schema:
   - name: customer_id
