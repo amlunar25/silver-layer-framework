@@ -2,6 +2,7 @@ entity: customer
 bronze_table: bronze_sandbox.accelerator.customer
 silver_table: silver_sandbox.accelerator.customer
 audit_table: silver_sandbox.accelerator.audit_log
+ingestion_audit_table: silver_sandbox.accelerator.ingestion_audit_log
 
 extraction:
   mode: full_scan          # full_scan | incremental

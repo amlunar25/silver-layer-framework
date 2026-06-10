@@ -392,6 +392,7 @@ entity: <entity_name>
 bronze_table: <catalog>.<schema>.<table>
 silver_table: <catalog>.<schema>.<table>
 audit_table: <catalog>.<schema>.audit_log
+ingestion_audit_table: <catalog>.<schema>.ingestion_audit_log
 
 extraction:
   mode: full_scan          # full_scan | incremental

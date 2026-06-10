@@ -2,6 +2,7 @@ entity: orders
 bronze_table: bronze_sandbox.accelerator.orders
 silver_table: silver_sandbox.accelerator.orders
 audit_table: silver_sandbox.accelerator.audit_log
+ingestion_audit_table: silver_sandbox.accelerator.ingestion_audit_log
 
 extraction:
   mode: incremental        # full_scan | incremental
@@ -45,3 +46,9 @@ dq_checks:
     type: not_null
   - column: amount
     type: not_null
+
+transformations:
+  - name: EST_time
+    column: process_date
+  - name: trim_right_zeros
+    params: [order_id,]

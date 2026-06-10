@@ -3,13 +3,19 @@ from typing import Any, Dict, List, Optional
 
 from pyspark.sql import DataFrame, SparkSession
 
-from silver_framework.audit_logger import log_audit
+from silver_framework.audit_logger import log_dq_audit, log_ingestion_audit
 from silver_framework.bronze_connector import read_bronze
 from silver_framework.config_loader import load_config
 from silver_framework.dq_framework import apply_dq_checks
 from silver_framework.logger import get_logger
 from silver_framework.schema_enforcement import enforce_schema
-from silver_framework.silver_connector import apply_soft_delete, deduplicate, ensure_silver_table, upsert_to_silver
+from silver_framework.silver_connector import (
+    apply_soft_delete,
+    deduplicate,
+    ensure_silver_table,
+    get_merge_metrics,
+    upsert_to_silver,
+)
 from silver_framework.transformations import apply_transformations
 
 
@@ -65,8 +71,8 @@ def run_entity(
 ) -> Dict[str, Any]:
     """Run the full Bronze → Silver pipeline for a single entity.
 
-    All table references (bronze_table, silver_table, audit_table) are read
-    directly from the YAML config at config_path — no overrides needed.
+    All table references (bronze_table, silver_table, audit_table,
+    ingestion_audit_table) are read directly from the YAML config.
 
     full_scan controls the extraction mode:
       - None  → use extraction.mode from the YAML config (default)
@@ -156,7 +162,11 @@ def run_entity(
 
         # ── Stage 6: Soft Delete ─────────────────────────────────────────────
         log.info("Stage 6/8 — Applying soft delete filter")
+        deduped_count = deduped_df.count()
         final_df = apply_soft_delete(deduped_df, config)
+        ingested_count = final_df.count()
+        deleted_count = deduped_count - ingested_count
+        log.info("Soft delete removed %d records", deleted_count)
 
         # ── Stage 7: Ensure Silver Table Exists ──────────────────────────────
         log.info("Stage 7/8 — Ensuring silver table exists: '%s'", config["silver_table"])
@@ -165,10 +175,20 @@ def run_entity(
         # ── Stage 8: Upsert ──────────────────────────────────────────────────
         log.info("Stage 8/8 — Upserting to Silver: '%s'", config["silver_table"])
         upsert_to_silver(spark, final_df, config)
-        log.info("Upserted %d records to '%s'", final_df.count(), config["silver_table"])
+        log.info("Upserted %d records to '%s'", ingested_count, config["silver_table"])
 
         # ── Audit ────────────────────────────────────────────────────────────
-        log_audit(spark, config, input_count, valid_count, invalid_count, "SUCCESS")
+        log_dq_audit(spark, config, input_count, valid_count, invalid_count, "SUCCESS")
+
+        merge_metrics = get_merge_metrics(spark, config["silver_table"])
+        log_ingestion_audit(
+            spark, config,
+            ingested_records=ingested_count,
+            inserted_records=merge_metrics["inserted"],
+            updated_records=merge_metrics["updated"],
+            deleted_records=deleted_count,
+            status="SUCCESS",
+        )
         log.info("Entity '%s' pipeline completed successfully", entity)
 
     except Exception as exc:
@@ -176,9 +196,9 @@ def run_entity(
         result["status"] = "FAILED"
         result["error"] = str(exc)
         try:
-            log_audit(spark, config, result["input_count"], result["valid_count"], result["invalid_count"], "FAILED")
+            log_dq_audit(spark, config, result["input_count"], result["valid_count"], result["invalid_count"], "FAILED")
         except Exception as audit_exc:
-            log.error("Could not write FAILED audit record: %s", audit_exc)
+            log.error("Could not write FAILED DQ audit record: %s", audit_exc)
 
     finally:
         _unpersist(raw_df, use_cache)
