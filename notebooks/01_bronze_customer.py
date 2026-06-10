@@ -58,13 +58,11 @@ full_path   = config_path if config_path.startswith("/") else os.path.join(proje
 with open(full_path) as f:
     config = yaml.safe_load(f)
 
-bronze_table = config["bronze_table"]   # e.g. bronze_sandbox.test_silver.customer
-silver_table = config["silver_table"]   # e.g. silver_sandbox.test_silver.customer
-audit_table  = config["audit_table"]    # e.g. silver_sandbox.test_silver.audit_log
+bronze_table = config["bronze_table"]
+silver_table = config["silver_table"]
+audit_table  = config["audit_table"]
 
-# Derive catalog and schema from the fully-qualified table names in the YAML
 bronze_catalog, bronze_schema, _ = bronze_table.split(".")
-silver_catalog, silver_schema, _ = silver_table.split(".")
 
 print(f"bronze_table : {bronze_table}")
 print(f"silver_table : {silver_table}")
@@ -73,24 +71,6 @@ print(f"audit_table  : {audit_table}")
 # COMMAND ----------
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {bronze_catalog}.{bronze_schema}")
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {silver_catalog}.{silver_schema}")
-
-# COMMAND ----------
-
-spark.sql(f"""
-CREATE TABLE IF NOT EXISTS {audit_table} (
-    entity        STRING    NOT NULL COMMENT 'Entity name from YAML config',
-    silver_table  STRING    NOT NULL COMMENT 'Target silver table',
-    input_count   INT       NOT NULL,
-    valid_count   INT       NOT NULL,
-    invalid_count INT       NOT NULL,
-    status        STRING    NOT NULL COMMENT 'SUCCESS or FAILED',
-    timestamp     TIMESTAMP NOT NULL
-)
-USING DELTA
-COMMENT 'Pipeline audit log — one record per entity run'
-CLUSTER BY (timestamp)
-""")
 
 # COMMAND ----------
 
