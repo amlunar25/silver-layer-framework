@@ -133,7 +133,7 @@ for customer_id in range(1, NUM_CUSTOMERS + 1):
         day_offset = (customer_id - 1) * ORDERS_PER_CUSTOMER + i
         amount     = round(50.0 + (order_id * 17.5) % 450, 2)
         status     = STATUSES[order_id % len(STATUSES)]
-        order_ts   = BASE_DATE - timedelta(days=day_offset)
+        order_ts   = BASE_DATE + timedelta(days=day_offset)
         proc_dt    = order_ts.date()
 
         latest_row = [order_id, customer_id, amount, status, order_ts, proc_dt]
@@ -196,3 +196,7 @@ else:
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {bronze_table} ORDER BY order_id, order_date DESC").display()
+
+# COMMAND ----------
+
+
