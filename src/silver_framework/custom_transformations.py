@@ -98,7 +98,6 @@ def to_lowercase(df: DataFrame, column: str) -> DataFrame:
 
 _REGISTRY: Dict[str, Any] = {
     "convert_to_est":  convert_to_est,
-    "EST_time":        convert_to_est,   # alias used in existing configs
     "trim_right":      trim_right,
     "trim_left":       trim_left,
     "trim_right_zeros": trim_right_zeros,

@@ -26,13 +26,14 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text(    "config_path",       "configs/entities/customer.yaml",                                "Config Path")
-dbutils.widgets.text(    "project_root",      "/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework", "Project Root")
-dbutils.widgets.dropdown("full_scan",         "config", ["config", "true", "false"],                         "Full Scan Override")
-dbutils.widgets.text(    "start_date",        "",                                                             "Extraction Start Date (YYYY-MM-DD)")
-dbutils.widgets.text(    "end_date",          "",                                                             "Extraction End Date   (YYYY-MM-DD)")
-dbutils.widgets.dropdown("drop_silver_table", "false",  ["true", "false"],                                   "Drop Silver Table Before Run")
-dbutils.widgets.dropdown("use_cache",         "false",  ["true", "false"],                                   "Use Cache (disable on Serverless)")
+dbutils.widgets.text(    "config_path",          "configs/entities/customer.yaml",                                "Config Path")
+dbutils.widgets.text(    "project_root",         "/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework", "Project Root")
+dbutils.widgets.dropdown("full_scan",            "config", ["config", "true", "false"],                         "Full Scan Override")
+dbutils.widgets.text(    "start_date",           "",                                                             "Extraction Start Date (YYYY-MM-DD)")
+dbutils.widgets.text(    "end_date",             "",                                                             "Extraction End Date   (YYYY-MM-DD)")
+dbutils.widgets.dropdown("drop_silver_table",    "false",  ["true", "false"],                                   "Drop Silver Table Before Run")
+dbutils.widgets.dropdown("use_cache",            "false",  ["true", "false"],                                   "Use Cache (disable on Serverless)")
+dbutils.widgets.dropdown("force_key_reconciliation", "false", ["true", "false"],                              "Force Key Reconciliation (bypass frequency)")
 
 # COMMAND ----------
 
@@ -55,11 +56,12 @@ from silver_framework.pipeline_runner import run_entity
 config_path = dbutils.widgets.get("config_path")
 full_path   = config_path if config_path.startswith("/") else os.path.join(project_root, config_path)
 
-_scan_raw       = dbutils.widgets.get("full_scan")
-start_date      = dbutils.widgets.get("start_date")      or None
-end_date        = dbutils.widgets.get("end_date")         or None
-drop_silver     = dbutils.widgets.get("drop_silver_table").lower() == "true"
-use_cache       = dbutils.widgets.get("use_cache").lower() == "true"
+_scan_raw           = dbutils.widgets.get("full_scan")
+start_date          = dbutils.widgets.get("start_date")           or None
+end_date            = dbutils.widgets.get("end_date")             or None
+drop_silver         = dbutils.widgets.get("drop_silver_table").lower()   == "true"
+use_cache           = dbutils.widgets.get("use_cache").lower()           == "true"
+force_key_reconciliation = dbutils.widgets.get("force_key_reconciliation").lower() == "true"
 
 # "config" → None (pipeline_runner reads extraction.mode from YAML)
 # "true"   → True  (force full scan)
@@ -91,6 +93,7 @@ print(f"start_date          : {start_date or '(auto-detect)'}")
 print(f"end_date            : {end_date   or '(open)'}")
 print(f"drop_silver_table   : {drop_silver}")
 print(f"use_cache           : {use_cache}")
+print(f"force_key_reconciliation : {force_key_reconciliation}")
 
 # COMMAND ----------
 
@@ -104,22 +107,24 @@ if drop_silver:
 # ── Run the entity pipeline ───────────────────────────────────────────────────
 result = run_entity(
     spark,
-    config_path       = full_path,
-    full_scan         = full_scan_override,
+    config_path           = full_path,
+    full_scan             = full_scan_override,
     extraction_start_date = start_date,
     extraction_end_date   = end_date,
-    use_cache         = use_cache,
+    use_cache             = use_cache,
+    force_key_reconciliation = force_key_reconciliation,
 )
 
 status = result["status"]
 print(f"\n{'='*60}")
 print(f"  Entity  : {result['entity']}")
 print(f"  Status  : {status}")
-print(f"  Input   : {result['input_count']}")
-print(f"  Valid   : {result['valid_count']}")
-print(f"  Invalid : {result['invalid_count']}")
+print(f"  Input    : {result['input_count']}")
+print(f"  Valid    : {result['valid_count']}")
+print(f"  Invalid  : {result['invalid_count']}")
+print(f"  Reconciled : {result['reconciled_count']}")
 if result.get("error"):
-    print(f"  Error   : {result['error']}")
+    print(f"  Error    : {result['error']}")
 print(f"{'='*60}")
 
 # COMMAND ----------

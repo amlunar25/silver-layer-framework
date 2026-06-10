@@ -145,6 +145,86 @@ dq_checks:
 
 ---
 
+## Soft Delete
+
+Two complementary mechanisms keep silver aligned with the source when records are deleted.
+
+### Flag-based soft delete
+
+The source system emits a boolean deletion flag in every row.  The pipeline reads the flag,
+filters matching rows before the MERGE, and they never reach silver.
+
+```yaml
+soft_delete:
+  enabled: true
+  column: is_deleted   # column name in the source table
+  value: true          # rows matching this value are excluded
+```
+
+Set `enabled: false` (or omit the block entirely) when the source has no deletion flag.
+
+---
+
+### Key reconciliation
+
+Used when the source does **not** provide a deletion flag — deleted records simply stop
+appearing in new extracts.  On a configurable schedule the pipeline performs a full PK
+scan of both the bronze and silver tables, finds silver rows whose keys are absent from
+bronze, and applies the chosen strategy.
+
+```yaml
+soft_delete:
+  enabled: false          # set true if the source also has a flag column
+  key_reconciliation:     # presence of this block enables the periodic key scan
+    strategy: mark        # mark | remove  (see below)
+    deleted_flag_column: _is_deleted   # mark strategy only
+    frequency:
+      type: weekly        # weekly | monthly | specific_date | dates
+      day_of_week: monday
+```
+
+#### Strategies
+
+| Strategy | Behaviour | When to use |
+|----------|-----------|-------------|
+| `mark` | Sets `deleted_flag_column = True` on stale rows via Delta MERGE UPDATE.  Column is auto-created with `ALTER TABLE` when absent. | Preserve history; downstream queries filter `WHERE _is_deleted IS NULL OR NOT _is_deleted` |
+| `remove` | Physically deletes stale rows from silver via Delta MERGE DELETE. | No audit trail required; smaller silver table |
+
+#### Frequency types
+
+| `type` | Required field | Example value | Trigger condition |
+|--------|---------------|--------------|-------------------|
+| `weekly` | `day_of_week` | `monday` | Fires every week on the named day |
+| `monthly` | `day_of_month` | `1` | Fires on the given day-of-month (1–28) |
+| `specific_date` | `date` | `"2025-12-31"` | Fires once on that exact date |
+| `dates` | `dates` | `["2025-01-01", "2025-04-01"]` | Fires on any date in the list |
+
+#### How both mechanisms can coexist
+
+Both can be active simultaneously.  Flag-based delete runs every pipeline execution;
+key reconciliation runs only on its schedule.
+
+```yaml
+soft_delete:
+  enabled: true              # flag-based: runs every pipeline run
+  column: is_deleted
+  value: true
+  key_reconciliation:        # key scan: runs weekly as a safety net
+    strategy: mark           # add this block to enable; remove it to disable
+    deleted_flag_column: _is_deleted
+    frequency:
+      type: weekly
+      day_of_week: sunday
+```
+
+#### Forcing reconciliation at runtime
+
+Set the `force_key_reconciliation` widget to `true` in notebook `04_silver_entity` to
+bypass the frequency schedule and run a reconciliation immediately — useful during
+testing or after a large backfill.
+
+---
+
 ## Incremental Processing
 
 ### YAML configuration
@@ -457,8 +537,14 @@ deduplication:
 
 soft_delete:
   enabled: true
-  column: <flag_column>
-  value: true           # records matching this value are excluded
+  column: <flag_column>   # omit column/value when source has no flag
+  value: true             # records matching this value are excluded
+  key_reconciliation:     # optional — add block to enable; remove to disable
+    strategy: mark        # mark | remove
+    deleted_flag_column: _is_deleted   # mark strategy only
+    frequency:
+      type: weekly        # weekly | monthly | specific_date | dates
+      day_of_week: monday
 
 dq_checks:
   - column: <col>

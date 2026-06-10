@@ -38,6 +38,11 @@ soft_delete:
   enabled: true
   column: is_deleted
   value: true
+  key_reconciliation:
+    strategy: remove           # remove — physically deletes stale rows from silver
+    frequency:
+      type: monthly
+      day_of_month: 1          # runs on the 1st of every month
 
 dq_checks:
   - column: order_id
@@ -48,7 +53,7 @@ dq_checks:
     type: not_null
 
 transformations:
-  - name: EST_time
+  - name: convert_to_est
     column: order_date       # UTC timestamp → America/New_York (EST/EDT); process_date is DateType — cannot convert
   - name: trim_right_zeros
     column: amount           # "100.50" → "100.5", "85.00" → "85" (bronze stores amount as string)

@@ -38,6 +38,12 @@ soft_delete:
   enabled: true
   column: is_deleted
   value: true
+  key_reconciliation:
+    strategy: mark             # mark — sets _is_deleted=True; preserves history
+    deleted_flag_column: _is_deleted
+    frequency:
+      type: weekly
+      day_of_week: monday      # runs every Monday
 
 dq_checks:
   - column: customer_id
