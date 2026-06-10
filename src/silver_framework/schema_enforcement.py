@@ -32,12 +32,22 @@ _TYPE_MAP = {
 }
 
 
-def enforce_schema(df: DataFrame, schema: List[Dict[str, Any]]) -> DataFrame:
-    """
-    Cast existing columns to expected types, add missing columns as null,
-    and drop any columns not in the schema.
+def enforce_schema(
+    df: DataFrame,
+    schema: List[Dict[str, Any]],
+    add_missing_columns: bool = False,
+) -> DataFrame:
+    """Cast columns to expected types and align the DataFrame to the declared schema.
+
+    add_missing_columns controls what happens when a declared column is absent
+    from the source DataFrame:
+      True  (default) — adds the column as a null literal cast to the declared type.
+      False           — logs a WARNING and skips the column; it will not appear in
+                        the output. Downstream stages receive only the columns that
+                        were actually present in the source.
     """
     existing_cols = set(df.columns)
+    output_cols: List[str] = []
 
     for field in schema:
         col_name: str = field["name"]
@@ -45,14 +55,24 @@ def enforce_schema(df: DataFrame, schema: List[Dict[str, Any]]) -> DataFrame:
         col_type = _TYPE_MAP.get(type_str, StringType())
 
         if type_str not in _TYPE_MAP:
-            _log.warning("Unrecognized type '%s' for column '%s' — defaulting to StringType", type_str, col_name)
+            _log.warning(
+                "Unrecognized type '%s' for column '%s' — defaulting to StringType",
+                type_str, col_name,
+            )
 
         if col_name in existing_cols:
             _log.info("Casting column '%s' to %s", col_name, col_type)
             df = df.withColumn(col_name, F.col(col_name).cast(col_type))
-        else:
+            output_cols.append(col_name)
+        elif add_missing_columns:
             _log.info("Adding missing column '%s' as null (%s)", col_name, col_type)
             df = df.withColumn(col_name, F.lit(None).cast(col_type))
+            output_cols.append(col_name)
+        else:
+            _log.warning(
+                "Column '%s' not found in source — skipping "
+                "(schema_enforcement.add_missing_columns = false)",
+                col_name,
+            )
 
-    expected_cols = [f["name"] for f in schema]
-    return df.select(expected_cols)
+    return df.select(output_cols)

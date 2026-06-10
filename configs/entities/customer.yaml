@@ -24,6 +24,9 @@ schema:
   - name: is_deleted
     type: boolean
 
+schema_enforcement:
+  add_missing_columns: true   # default false (warn and skip); true: add missing cols as null
+
 primary_keys:
   - customer_id
 
@@ -39,8 +42,7 @@ soft_delete:
   column: is_deleted
   value: true
   key_reconciliation:
-    strategy: mark             # mark — sets _is_deleted=True; preserves history
-    deleted_flag_column: _is_deleted
+    strategy: mark             # mark — sets is_deleted=True on stale rows (reuses soft_delete.column)
     frequency:
       type: weekly
       day_of_week: monday      # runs every Monday

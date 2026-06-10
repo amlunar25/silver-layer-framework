@@ -11,11 +11,10 @@ Configured as a nested block inside ``soft_delete`` in the entity YAML:
 
     soft_delete:
       enabled: true
-      column: is_deleted      # flag-based delete (omit if not applicable)
+      column: is_deleted      # reused by mark strategy — single delete column
       value: true
       key_reconciliation:     # presence of this block enables the key scan
         strategy: mark        # mark | remove
-        deleted_flag_column: _is_deleted   # mark strategy only
         frequency:
           type: weekly        # weekly | monthly | specific_date | dates
           day_of_week: monday
@@ -23,9 +22,9 @@ Configured as a nested block inside ``soft_delete`` in the entity YAML:
 Strategies
 ──────────
 mark
-    Adds / updates a boolean column (``deleted_flag_column``) to True on stale rows
-    via a Delta MERGE UPDATE.  The column is created via ALTER TABLE when absent.
-    Downstream queries should filter WHERE _is_deleted IS NULL OR NOT _is_deleted.
+    Sets ``soft_delete.column`` to True on stale rows via a Delta MERGE UPDATE.
+    Reuses the same column as the flag-based soft delete so silver has a single
+    delete signal.  ``soft_delete.column`` must be defined in the config.
 
 remove
     Physically deletes stale rows from the silver table via a Delta MERGE DELETE.
@@ -160,12 +159,12 @@ def run_key_reconciliation(
 
     # ── mark strategy ─────────────────────────────────────────────────────────
     elif strategy == "mark":
-        flag_col: str = kr_config.get("deleted_flag_column", "_is_deleted")
-
-        # Auto-add the flag column when it does not yet exist in the silver table
-        if flag_col not in spark.table(silver_table).columns:
-            spark.sql(f"ALTER TABLE {silver_table} ADD COLUMN {flag_col} BOOLEAN")
-            _log.info("Added column '%s' to '%s'", flag_col, silver_table)
+        flag_col: Optional[str] = config.get("soft_delete", {}).get("column")
+        if not flag_col:
+            _log.warning(
+                "strategy='mark' requires soft_delete.column to be defined — skipping"
+            )
+            return {"affected_count": stale_count, "strategy": strategy, "skipped": True}
 
         _log.info(
             "Marking %d stale row(s) as %s=True in '%s'",

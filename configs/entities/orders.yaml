@@ -24,6 +24,9 @@ schema:
   - name: is_deleted
     type: boolean
 
+schema_enforcement:
+  add_missing_columns: true   # default false (warn and skip); true: add missing cols as null
+
 primary_keys:
   - order_id
 

@@ -165,7 +165,8 @@ def run_entity(
 
         # ── Stage 4: Schema Enforcement ──────────────────────────────────────
         log.info("Stage 4/9 — Enforcing schema")
-        enforced_df = enforce_schema(valid_df, config["schema"])
+        add_missing = config.get("schema_enforcement", {}).get("add_missing_columns", False)
+        enforced_df = enforce_schema(valid_df, config["schema"], add_missing)
 
         # ── Stage 5: Deduplicate ─────────────────────────────────────────────
         log.info("Stage 5/9 — Deduplicating")

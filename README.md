@@ -19,7 +19,7 @@ Bronze Delta Table
   dq_framework       ← not_null / regex checks → splits valid / quarantine
         │
         ▼
-schema_enforcement   ← cast types, add missing cols, drop extra cols
+schema_enforcement   ← cast types; add missing cols as null OR warn (YAML flag)
         │
         ▼
 silver_connector     ← dedup (window), soft delete, MERGE INTO silver
@@ -175,9 +175,10 @@ bronze, and applies the chosen strategy.
 ```yaml
 soft_delete:
   enabled: false          # set true if the source also has a flag column
+  column: is_deleted      # required when strategy is mark — reused as the delete signal
+  value: true
   key_reconciliation:     # presence of this block enables the periodic key scan
     strategy: mark        # mark | remove  (see below)
-    deleted_flag_column: _is_deleted   # mark strategy only
     frequency:
       type: weekly        # weekly | monthly | specific_date | dates
       day_of_week: monday
@@ -187,8 +188,8 @@ soft_delete:
 
 | Strategy | Behaviour | When to use |
 |----------|-----------|-------------|
-| `mark` | Sets `deleted_flag_column = True` on stale rows via Delta MERGE UPDATE.  Column is auto-created with `ALTER TABLE` when absent. | Preserve history; downstream queries filter `WHERE _is_deleted IS NULL OR NOT _is_deleted` |
-| `remove` | Physically deletes stale rows from silver via Delta MERGE DELETE. | No audit trail required; smaller silver table |
+| `mark` | Sets `soft_delete.column = True` on stale rows via Delta MERGE UPDATE.  Reuses the same column as the flag-based filter — one delete signal in silver. | Preserve history; downstream queries filter `WHERE is_deleted IS NULL OR NOT is_deleted` |
+| `remove` | Physically deletes stale rows from silver via Delta MERGE DELETE.  No column reference needed. | No audit trail required; smaller silver table |
 
 #### Frequency types
 
@@ -207,11 +208,10 @@ key reconciliation runs only on its schedule.
 ```yaml
 soft_delete:
   enabled: true              # flag-based: runs every pipeline run
-  column: is_deleted
+  column: is_deleted         # mark strategy reuses this column — no extra column
   value: true
-  key_reconciliation:        # key scan: runs weekly as a safety net
-    strategy: mark           # add this block to enable; remove it to disable
-    deleted_flag_column: _is_deleted
+  key_reconciliation:        # key scan: add this block to enable, remove to disable
+    strategy: mark
     frequency:
       type: weekly
       day_of_week: sunday
@@ -527,6 +527,9 @@ schema:
   - name: <col>
     type: <string|integer|long|double|boolean|timestamp|date>
 
+schema_enforcement:
+  add_missing_columns: false  # default false: warn and skip | true: add missing cols as null
+
 primary_keys:
   - <col>
 
@@ -540,8 +543,7 @@ soft_delete:
   column: <flag_column>   # omit column/value when source has no flag
   value: true             # records matching this value are excluded
   key_reconciliation:     # optional — add block to enable; remove to disable
-    strategy: mark        # mark | remove
-    deleted_flag_column: _is_deleted   # mark strategy only
+    strategy: mark        # mark (uses soft_delete.column) | remove
     frequency:
       type: weekly        # weekly | monthly | specific_date | dates
       day_of_week: monday
