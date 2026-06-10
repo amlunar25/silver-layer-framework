@@ -49,6 +49,8 @@ dq_checks:
 
 transformations:
   - name: EST_time
-    column: process_date
+    column: order_date       # UTC timestamp → America/New_York (EST/EDT); process_date is DateType — cannot convert
   - name: trim_right_zeros
-    params: [order_id,]
+    column: amount           # "100.50" → "100.5", "85.00" → "85" (bronze stores amount as string)
+  - name: to_uppercase
+    column: status           # "pending" → "PENDING"

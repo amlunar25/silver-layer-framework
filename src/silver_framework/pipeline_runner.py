@@ -16,6 +16,7 @@ from silver_framework.silver_connector import (
     get_merge_metrics,
     upsert_to_silver,
 )
+from silver_framework.custom_transformations import apply_custom_transformations
 from silver_framework.transformations import apply_transformations
 
 
@@ -131,10 +132,13 @@ def run_entity(
         log.info("Bronze records: %d", input_count)
 
         # ── Stage 2: Transform ───────────────────────────────────────────────
-        log.info("Stage 2/8 — Transforming")
+        log.info("Stage 2/8 — Transforming (base: normalise columns, trim strings)")
         transformed_df = apply_transformations(raw_df)
         _unpersist(raw_df, use_cache)
         raw_df = None
+
+        log.info("Stage 2/8 — Transforming (custom: YAML-driven column transformations)")
+        transformed_df = apply_custom_transformations(transformed_df, config)
         _cache(transformed_df, use_cache)
 
         # ── Stage 3: Data Quality ────────────────────────────────────────────

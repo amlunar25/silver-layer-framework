@@ -15,6 +15,14 @@
 # MAGIC Orders are spread across ~20 days so the date filter produces meaningful
 # MAGIC subsets for incremental testing.
 # MAGIC
+# MAGIC **Custom transformation scenarios (from YAML):**
+# MAGIC
+# MAGIC | Scenario | Column | Raw value | After transformation |
+# MAGIC |---|---|---|---|
+# MAGIC | `EST_time` | `order_date` | UTC timestamp | America/New_York (EST/EDT) |
+# MAGIC | `trim_right_zeros` | `amount` | `"85.00"` | `"85"` → double `85.0` after schema enforcement |
+# MAGIC | `to_uppercase` | `status` | `"pending"` | `"PENDING"` |
+# MAGIC
 # MAGIC **DQ scenarios (full load only):**
 # MAGIC - Duplicate `order_id` per customer → deduplication keeps the latest record
 # MAGIC - Every 5th order marked `is_deleted = True` → excluded by soft-delete filter
@@ -99,18 +107,25 @@ sd_column      = sd_config.get("column") if sd_enabled else None
 
 # COMMAND ----------
 
-STATUSES            = ["PENDING", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"]
+# Statuses stored lowercase → to_uppercase makes them "PENDING", "CONFIRMED", etc.
+STATUSES            = ["pending", "confirmed", "shipped", "delivered", "cancelled"]
 NUM_CUSTOMERS       = 5
 ORDERS_PER_CUSTOMER = 4
-# Anchor date — orders spread backwards so incremental windows are meaningful
-BASE_DATE           = datetime(2024, 1, 15)
+# Anchor date at noon UTC — EST_time shifts order_date 5h back (to 07:00 EST)
+# making the timezone conversion clearly visible without changing the date
+BASE_DATE           = datetime(2024, 1, 15, 12, 0, 0)
+
+# amount is stored as StringType with explicit trailing zeros to exercise trim_right_zeros:
+#   "85.00"  → trim_right_zeros → "85"   → schema enforcement → double 85.0
+#   "102.50" → trim_right_zeros → "102.5" → schema enforcement → double 102.5
+# order_date (TimestampType) will be converted from UTC to EST by EST_time.
 
 # Build schema conditionally based on whether soft-delete column is needed
 fields = [
     StructField("order_id",     IntegerType()),
     StructField("customer_id",  IntegerType()),
-    StructField("amount",       DoubleType()),
-    StructField("status",       StringType()),
+    StructField("amount",       StringType()),   # stored as string to exercise trim_right_zeros
+    StructField("status",       StringType()),   # stored lowercase to exercise to_uppercase
     StructField("order_date",   TimestampType()),
     StructField("process_date", DateType()),
 ]
@@ -123,22 +138,25 @@ rows = []
 order_id = 1
 
 # Spread orders across ~20 days so incremental date windows return distinct subsets.
-# customer 1 → 2024-01-15 .. 2024-01-12
-# customer 2 → 2024-01-11 .. 2024-01-08
-# customer 3 → 2024-01-07 .. 2024-01-04
-# customer 4 → 2024-01-03 .. 2024-01-01, 2023-12-31
-# customer 5 → 2023-12-30 .. 2023-12-27
+# customer 1 → 2024-01-15 .. 2024-01-18  (BASE_DATE + 0..3)
+# customer 2 → 2024-01-19 .. 2024-01-22
+# customer 3 → 2024-01-23 .. 2024-01-26
+# customer 4 → 2024-01-27 .. 2024-01-30
+# customer 5 → 2024-01-31 .. 2024-02-03
 for customer_id in range(1, NUM_CUSTOMERS + 1):
     for i in range(ORDERS_PER_CUSTOMER):
         day_offset = (customer_id - 1) * ORDERS_PER_CUSTOMER + i
-        amount     = round(50.0 + (order_id * 17.5) % 450, 2)
+        # Format amount as string with 2 decimal places — some end in ".00" or ".50"
+        raw_amount = 50.0 + (order_id * 17.5) % 450
+        amount     = f"{raw_amount:.2f}"          # e.g. "85.00", "102.50", "120.00"
         status     = STATUSES[order_id % len(STATUSES)]
         order_ts   = BASE_DATE + timedelta(days=day_offset)
         proc_dt    = order_ts.date()
 
         latest_row = [order_id, customer_id, amount, status, order_ts, proc_dt]
         older_ts   = order_ts - timedelta(days=3)
-        older_row  = [order_id, customer_id, amount - 5.0, "PENDING", older_ts, older_ts.date()]
+        older_amt  = f"{raw_amount - 5.0:.2f}"
+        older_row  = [order_id, customer_id, older_amt, "pending", older_ts, older_ts.date()]
 
         if sd_column:
             is_deleted = (order_id % 5 == 0)   # every 5th order soft-deleted
@@ -155,14 +173,14 @@ dq_failures = []
 if load_mode == "full":
     null_rows = [
         # null order_id
-        [None,         1,    99.99,  "PENDING",   BASE_DATE, BASE_DATE.date()],
-        [None,         2,    49.99,  "CONFIRMED", BASE_DATE, BASE_DATE.date()],
+        [None,         1,    "99.99",  "pending",   BASE_DATE, BASE_DATE.date()],
+        [None,         2,    "49.99",  "confirmed", BASE_DATE, BASE_DATE.date()],
         # null customer_id
-        [order_id,     None, 120.00, "SHIPPED",   BASE_DATE, BASE_DATE.date()],
-        [order_id + 1, None, 200.00, "DELIVERED", BASE_DATE, BASE_DATE.date()],
+        [order_id,     None, "120.00", "shipped",   BASE_DATE, BASE_DATE.date()],
+        [order_id + 1, None, "200.00", "delivered", BASE_DATE, BASE_DATE.date()],
         # null amount
-        [order_id + 2, 3,    None,   "PENDING",   BASE_DATE, BASE_DATE.date()],
-        [order_id + 3, 4,    None,   "CANCELLED", BASE_DATE, BASE_DATE.date()],
+        [order_id + 2, 3,    None,     "pending",   BASE_DATE, BASE_DATE.date()],
+        [order_id + 3, 4,    None,     "cancelled", BASE_DATE, BASE_DATE.date()],
     ]
     for r in null_rows:
         if sd_column:

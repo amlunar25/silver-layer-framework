@@ -36,9 +36,16 @@ needed to onboard a new entity.
 
 ## Transformations
 
-Applied automatically to every entity before DQ checks. No YAML configuration required.
+Two layers of transformations are applied in Stage 2, before DQ checks:
 
-### Column Name Normalisation (`normalize_column_names`)
+1. **Base transformations** — applied to every entity automatically, no YAML needed
+2. **Custom transformations** — declared per-entity in the YAML `transformations` section
+
+---
+
+### Base transformations
+
+#### Column Name Normalisation (`normalize_column_names`)
 
 Renames every column to `snake_case` using the following rules applied in order:
 
@@ -49,9 +56,47 @@ Renames every column to `snake_case` using the following rules applied in order:
 | 3 | Replace any character that is not `a-z`, `0-9`, or `_` with `_` | `first-name` → `first_name` |
 | 4 | Collapse consecutive underscores and strip leading/trailing ones | `__col__` → `col` |
 
-### String Trimming (`trim_strings`)
+#### String Trimming (`trim_strings`)
 
 Applies `F.trim()` to every column with `StringType`. Non-string columns (integers, timestamps, booleans, etc.) are left untouched.
+
+---
+
+### Custom transformations
+
+Declared in the YAML `transformations` section. Applied after the base transformations. Each step targets a single column via `column:` or the first element of `params:`.
+
+```yaml
+transformations:
+  - name: convert_to_est
+    column: process_date
+  - name: trim_right_zeros
+    column: amount
+  - name: trim_left_zeros
+    params: [order_id]    # params list is also accepted; first element is the column
+```
+
+Unknown names and missing columns are logged as warnings and skipped — they never block the pipeline.
+
+#### Available functions
+
+| Name | Alias | Description |
+|------|-------|-------------|
+| `convert_to_est` | `EST_time` | Convert a UTC `TimestampType` column to Eastern Time (`America/New_York`). Handles DST automatically — EST (UTC-5) in winter, EDT (UTC-4) in summer |
+| `trim_right` | — | Strip trailing whitespace from a string column (`F.rtrim`) |
+| `trim_left` | — | Strip leading whitespace from a string column (`F.ltrim`) |
+| `trim_right_zeros` | — | Remove trailing zeros from a decimal/string representation. `"1.500"` → `"1.5"`, `"100.00"` → `"100"`. No-op on integers without a decimal point |
+| `trim_left_zeros` | — | Remove leading zeros from a string/numeric representation. `"007"` → `"7"`, `"001.5"` → `"1.5"` |
+| `to_uppercase` | — | Convert a string column to upper case |
+| `to_lowercase` | — | Convert a string column to lower case |
+
+> **Type note:** `trim_right_zeros` and `trim_left_zeros` cast the column to `StringType` internally. The schema enforcement step (Stage 4) restores the declared type from the YAML schema.
+
+#### Adding a new transformation
+
+1. Add a function `my_transform(df: DataFrame, column: str) -> DataFrame` to `src/silver_framework/custom_transformations.py`
+2. Register it in `_REGISTRY` at the bottom of the same file
+3. Reference it by name in any entity's YAML — no other changes required
 
 ---
 

@@ -47,3 +47,11 @@ dq_checks:
   - column: email
     type: regex
     pattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
+
+transformations:
+  - name: convert_to_est
+    column: updated_at       # UTC timestamp → America/New_York (EST/EDT)
+  - name: trim_left_zeros
+    column: phone            # "0123-456-7890" → "123-456-7890"
+  - name: to_uppercase
+    column: name             # "alice" → "ALICE"
