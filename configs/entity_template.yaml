@@ -153,7 +153,10 @@ dq_checks:
 # Omit the block entirely to skip custom transformations.
 transformations:
   - name: <transformation_name>   # [MANDATORY] see available functions below
-    column: <column_name>         # [MANDATORY] target column
+    column: <column_name>         # [MANDATORY] source column the transformation reads from
+    new_column_name: <new_col>    # [OPTIONAL]  when set, the result is written to this new
+                                  #             column and the source column is left unchanged.
+                                  #             Omit (or leave blank) to overwrite the source.
 
   # Available transformation names:
   #
