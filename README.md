@@ -34,6 +34,85 @@ needed to onboard a new entity.
 
 ---
 
+## `run_entity` — Main Entry Point
+
+`run_entity` in `src/silver_framework/pipeline_runner.py` is the single function that executes the full Bronze → Silver pipeline for one entity. Every notebook and script ultimately calls it — there is nothing else to wire up.
+
+```python
+from silver_framework.pipeline_runner import run_entity
+
+result = run_entity(
+    spark,
+    config_path="configs/entities/customer.yaml",
+)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `spark` | `SparkSession` | — | Active Spark session (provided by Databricks or created locally) |
+| `config_path` | `str` | — | Path to the entity YAML file. Relative paths are resolved from the current working directory |
+| `full_scan` | `bool \| None` | `None` | `None` = use `extraction.mode` from YAML; `True` = force full scan; `False` = force incremental |
+| `extraction_start_date` | `str \| None` | `None` | Inclusive start date (`YYYY-MM-DD`) for incremental mode. When `None`, auto-detected from `MAX(filter_column)` in the silver table |
+| `extraction_end_date` | `str \| None` | `None` | Inclusive end date (`YYYY-MM-DD`) for incremental mode. `None` means open-ended |
+| `use_cache` | `bool` | `True` | Set to `False` on Databricks Serverless — `DataFrame.cache()` is not supported there |
+| `force_key_reconciliation` | `bool` | `False` | Bypass the frequency schedule and run key reconciliation immediately — useful during testing or after a large backfill |
+
+### Pipeline stages
+
+`run_entity` executes 9 stages in sequence. A failure in any stage sets `status = "FAILED"`, writes the audit record, and returns — it never raises.
+
+| Stage | Module | What it does |
+|-------|--------|--------------|
+| 1 — Read Bronze | `bronze_connector` | Reads the bronze Delta table. Applies date filter when `full_scan=False` |
+| 2 — Transform | `transformations`, `custom_transformations` | Normalises column names to `snake_case`, trims strings, then applies YAML-declared column transformations |
+| 3 — Data Quality | `dq_framework` | Runs `not_null` / `regex` checks. Splits records into `valid_df` and `invalid_df` (quarantine) |
+| 4 — Schema Enforcement | `schema_enforcement` | Casts columns to YAML-declared types; adds missing columns as `null` (if configured); drops undeclared columns |
+| 5 — Deduplicate | `silver_connector` | Window function over primary keys, ordered by `deduplication.order_by` — keeps one row per key |
+| 6 — Soft Delete | `silver_connector` | Filters rows where `soft_delete.column` equals `soft_delete.value` |
+| 7 — Ensure Table | `silver_connector` | Creates the silver Delta table if it does not exist |
+| 8 — Upsert | `silver_connector` | `MERGE INTO` silver on primary keys — inserts new rows, updates changed rows |
+| 9 — Key Reconciliation | `key_reconciliation` | Frequency-gated: finds silver rows whose PKs are absent from bronze and applies `mark` or `remove` strategy |
+
+### Return value
+
+`run_entity` always returns a `dict` — it never raises an exception to the caller.
+
+```python
+{
+    "entity":           "customer",   # entity name from YAML
+    "status":           "SUCCESS",    # "SUCCESS" | "FAILED"
+    "input_count":      6,            # rows read from bronze
+    "valid_count":      4,            # rows that passed all DQ checks
+    "invalid_count":    2,            # rows quarantined
+    "reconciled_count": 0,            # rows affected by key reconciliation (0 if not run)
+    "error":            None,         # exception message string on failure, else None
+}
+```
+
+### Running multiple entities in parallel
+
+`run_entities_parallel` wraps `run_entity` in a `ThreadPoolExecutor` — one entity's failure never blocks the others.
+
+```python
+from silver_framework.pipeline_runner import run_entities_parallel
+
+results = run_entities_parallel(
+    spark,
+    config_paths=[
+        "configs/entities/customer.yaml",
+        "configs/entities/orders.yaml",
+    ],
+    max_workers=4,
+    use_cache=False,
+)
+```
+
+`full_scan`, `extraction_start_date`, `extraction_end_date`, and `force_key_reconciliation` are forwarded to every entity in the list. For per-entity overrides (e.g. customer runs incremental while orders runs full scan) call `run_entity` directly for each and manage concurrency yourself — this is exactly what notebook `03_silver_load` does.
+
+---
+
 ## Transformations
 
 Two layers of transformations are applied in Stage 2, before DQ checks:
@@ -300,34 +379,50 @@ silver-layer-framework/
 
 ## How to Run Locally
 
-### 1. Install dependencies
+### 1. Java runtime
+
+PySpark requires a JVM. Install OpenJDK 17 and add `JAVA_HOME` to your shell profile so it persists across terminal sessions:
 
 ```bash
-pip install -r requirements.txt
+brew install openjdk@17
+echo 'export JAVA_HOME=$(brew --prefix openjdk@17)' >> ~/.zshrc
+source ~/.zshrc
 ```
 
-> **Note:** `delta-spark` requires a Java runtime. On macOS:
-> `brew install openjdk@11 && export JAVA_HOME=$(brew --prefix openjdk@11)`
+Verify:
 
-### 2. Run the pipeline simulation
+```bash
+java -version   # should print openjdk 17.x.x
+```
+
+### 2. Install the framework and dev dependencies
+
+`pyspark` and `delta-spark` are intentionally excluded from `pyproject.toml` (Databricks provides them at runtime), so install them separately alongside the framework:
+
+```bash
+pip install -e ".[dev]"
+pip install pyspark delta-spark
+```
+
+### 3. Run the pipeline simulation
 
 ```bash
 python main.py
 ```
 
 The script will:
-1. Start a local SparkSession with Delta Lake enabled
-2. Create and populate a `bronze.customers` Delta table with sample data
-3. Run the full pipeline (transform → DQ → schema → dedup → soft delete → MERGE)
-4. Print the Silver output and the quarantine output
+1. Start a local SparkSession with Delta Lake enabled (via `delta.pip_utils`)
+2. Seed `bronze.customers` and `bronze.orders` Delta tables with sample data
+3. Run both entity pipelines concurrently via `run_entities_parallel`
+4. Print a summary with input / valid / quarantine counts per entity
 
-### 3. Run the test suite
+### 4. Run the test suite
 
 ```bash
 pytest tests/ -v
 ```
 
-The test suite uses a local `SparkSession` (`local[1]`) — no Databricks environment needed.
+The test suite uses a local `SparkSession` (`local[1]`) — no Databricks environment needed. All 22 tests should pass.
 
 ---
 
