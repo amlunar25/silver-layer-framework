@@ -25,17 +25,18 @@ dbutils.widgets.text("project_root", "/Workspace/Users/alexander.luna@factored.a
 
 # COMMAND ----------
 
-import os
-import sys
-
 project_root = dbutils.widgets.get("project_root")
-sys.path.insert(0, f"{project_root}/src")
-%load_ext autoreload
-%autoreload 2
 
 # COMMAND ----------
 
-pip install pyyaml
+%pip install -q -e $project_root
+
+# COMMAND ----------
+
+import os
+project_root = dbutils.widgets.get("project_root")
+%load_ext autoreload
+%autoreload 2
 
 # COMMAND ----------
 
@@ -119,12 +120,6 @@ print(f"Ingestion audit table ready: {ingestion_audit_table}")
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC truncate table silver_sandbox.accelerator.audit_log;
-# MAGIC truncate table silver_sandbox.accelerator.ingestion_audit_log;
-
-# COMMAND ----------
-
 spark.sql(f"SELECT * FROM {audit_table} ORDER BY timestamp DESC LIMIT 20").display()
 
 # COMMAND ----------
@@ -135,7 +130,3 @@ spark.sql(f"SELECT * FROM {audit_table} ORDER BY timestamp DESC LIMIT 20").displ
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {ingestion_audit_table} ORDER BY updated_ts DESC LIMIT 20").display()
-
-# COMMAND ----------
-
-

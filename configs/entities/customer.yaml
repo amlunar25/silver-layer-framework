@@ -63,7 +63,4 @@ transformations:
     column: phone            # "0123-456-7890" → "123-456-7890"
   - name: to_uppercase
     column: name             # "alice" → "ALICE"
-<<<<<<< HEAD
     new_col_name: name_upper
-=======
->>>>>>> parent of 34780f8 (Adding incremental test)
