@@ -40,13 +40,19 @@ dbutils.widgets.text("orders_end_date",      "",                                
 
 # COMMAND ----------
 
+project_root = dbutils.widgets.get("project_root")
+
+# COMMAND ----------
+
+%pip install -q -e $project_root
+
+# COMMAND ----------
+
 import os
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict
 
 project_root = dbutils.widgets.get("project_root")
-sys.path.insert(0, f"{project_root}/src")
 
 from silver_framework.config_loader import load_config
 from silver_framework.pipeline_runner import run_entity
