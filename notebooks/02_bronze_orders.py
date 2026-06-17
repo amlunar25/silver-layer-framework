@@ -40,17 +40,17 @@ dbutils.widgets.text("end_date",   "", "Incremental End Date   (YYYY-MM-DD, incl
 
 # COMMAND ----------
 
-project_root = dbutils.widgets.get("project_root")
-
-# COMMAND ----------
-
-%pip install -q -e $project_root
+pip install pyyaml
 
 # COMMAND ----------
 
 import os
+import sys
+
 import yaml
+
 project_root = dbutils.widgets.get("project_root")
+sys.path.insert(0, f"{project_root}/src")
 %load_ext autoreload
 %autoreload 2
 
@@ -118,10 +118,6 @@ ORDERS_PER_CUSTOMER = 4
 # Anchor date at noon UTC — EST_time shifts order_date 5h back (to 07:00 EST)
 # making the timezone conversion clearly visible without changing the date
 BASE_DATE           = datetime(2024, 1, 15, 12, 0, 0)
-# Full load covers order_ids 1–20 across process_dates 2024-01-15 → 2024-02-03.
-# Incremental data starts at order_id 21 and process_date 2024-02-04.
-INCREMENTAL_START_ORDER_ID = 21
-INCREMENTAL_BASE_DATE      = datetime(2024, 2, 4, 12, 0, 0)
 
 # amount is stored as StringType with explicit trailing zeros to exercise trim_right_zeros:
 #   "85.00"  → trim_right_zeros → "85"   → schema enforcement → double 85.0
@@ -142,123 +138,83 @@ if sd_column:
 
 schema_def = StructType(fields)
 
+rows = []
+order_id = 1
 
-def _make_row(order_id, customer_id, raw_amount, status, order_ts, is_deleted_val):
-    """Build a single row tuple, appending is_deleted only when soft-delete is active."""
-    row = [
-        order_id,
-        customer_id,
-        f"{raw_amount:.2f}",
-        status,
-        order_ts,
-        order_ts.date(),
-    ]
-    if sd_column:
-        row.append(is_deleted_val)
-    return tuple(row)
-
-
-def generate_full_orders():
-    """Initial orders dataset used for a full/overwrite load.
-
-    Generates order_ids 1–20 spread across 2024-01-15 → 2024-02-03.
-    Scenarios covered:
-      - Each order_id appears twice (latest + older duplicate) → dedup keeps latest
-      - Every 5th order is soft-deleted
-      - DQ failure rows (null order_id / customer_id / amount) → quarantined
-    """
-    rows     = []
-    order_id = 1
-
-    for customer_id in range(1, NUM_CUSTOMERS + 1):
-        for i in range(ORDERS_PER_CUSTOMER):
-            day_offset = (customer_id - 1) * ORDERS_PER_CUSTOMER + i
-            raw_amount = 50.0 + (order_id * 17.5) % 450
-            status     = STATUSES[order_id % len(STATUSES)]
-            order_ts   = BASE_DATE + timedelta(days=day_offset)
-            older_ts   = order_ts - timedelta(days=3)
-
-            rows.append(_make_row(order_id, customer_id, raw_amount,       status,    order_ts, order_id % 5 == 0))
-            rows.append(_make_row(order_id, customer_id, raw_amount - 5.0, "pending", older_ts, False))
-            order_id += 1
-
-    # DQ failure rows — null required fields
-    null_rows = [
-        [None,         1,    99.99,  "pending",   BASE_DATE, BASE_DATE.date()],
-        [None,         2,    49.99,  "confirmed", BASE_DATE, BASE_DATE.date()],
-        [order_id,     None, 120.00, "shipped",   BASE_DATE, BASE_DATE.date()],
-        [order_id + 1, None, 200.00, "delivered", BASE_DATE, BASE_DATE.date()],
-        [order_id + 2, 3,    None,   "pending",   BASE_DATE, BASE_DATE.date()],
-        [order_id + 3, 4,    None,   "cancelled", BASE_DATE, BASE_DATE.date()],
-    ]
-    for r in null_rows:
-        row = [r[0], r[1], f"{r[2]:.2f}" if r[2] is not None else None, r[3], r[4], r[5]]
-        if sd_column:
-            row.append(False)
-        rows.append(tuple(row))
-
-    return spark.createDataFrame(rows, schema_def)
-
-
-def generate_incremental_orders(proc_start_date: str, proc_end_date: str = None):
-    """New orders for an incremental append run, continuing beyond the full-load range.
-
-    order_ids start at INCREMENTAL_START_ORDER_ID (21) so they never overlap with
-    the full-load dataset. process_dates start at INCREMENTAL_BASE_DATE (2024-02-04).
-
-    Args:
-        proc_start_date: Inclusive start of the incremental window (YYYY-MM-DD).
-        proc_end_date:   Inclusive end of the window; open-ended when None.
-
-    Scenarios covered:
-      - Each order_id appears twice (latest + older duplicate) → dedup keeps latest
-      - Every 5th order is soft-deleted
-      - One order per customer, spread across consecutive days from proc_start_date
-    """
-    start_dt  = date.fromisoformat(proc_start_date)
-    end_dt    = date.fromisoformat(proc_end_date) if proc_end_date else None
-    rows      = []
-    order_id  = INCREMENTAL_START_ORDER_ID
-
-    for customer_id in range(1, NUM_CUSTOMERS + 1):
-        day_offset = customer_id - 1
-        proc_dt    = start_dt + timedelta(days=day_offset)
-
-        # Skip rows outside the requested window
-        if end_dt and proc_dt > end_dt:
-            continue
-
-        order_ts   = datetime(proc_dt.year, proc_dt.month, proc_dt.day, 12, 0, 0)
+# Spread orders across ~20 days so incremental date windows return distinct subsets.
+# customer 1 → 2024-01-15 .. 2024-01-18  (BASE_DATE + 0..3)
+# customer 2 → 2024-01-19 .. 2024-01-22
+# customer 3 → 2024-01-23 .. 2024-01-26
+# customer 4 → 2024-01-27 .. 2024-01-30
+# customer 5 → 2024-01-31 .. 2024-02-03
+for customer_id in range(1, NUM_CUSTOMERS + 1):
+    for i in range(ORDERS_PER_CUSTOMER):
+        day_offset = (customer_id - 1) * ORDERS_PER_CUSTOMER + i
+        # Format amount as string with 2 decimal places — some end in ".00" or ".50"
         raw_amount = 50.0 + (order_id * 17.5) % 450
+        amount     = f"{raw_amount:.2f}"          # e.g. "85.00", "102.50", "120.00"
         status     = STATUSES[order_id % len(STATUSES)]
-        older_ts   = order_ts - timedelta(days=2)
+        order_ts   = BASE_DATE + timedelta(days=day_offset)
+        proc_dt    = order_ts.date()
 
-        rows.append(_make_row(order_id, customer_id, raw_amount,       status,    order_ts, order_id % 5 == 0))
-        rows.append(_make_row(order_id, customer_id, raw_amount - 5.0, "pending", older_ts, False))
+        latest_row = [order_id, customer_id, amount, status, order_ts, proc_dt]
+        older_ts   = order_ts - timedelta(days=3)
+        older_amt  = f"{raw_amount - 5.0:.2f}"
+        older_row  = [order_id, customer_id, older_amt, "pending", older_ts, older_ts.date()]
+
+        if sd_column:
+            is_deleted = (order_id % 5 == 0)   # every 5th order soft-deleted
+            latest_row.append(is_deleted)
+            older_row.append(False)
+
+        rows.append(tuple(latest_row))
+        rows.append(tuple(older_row))   # older duplicate — dedup discards this
+
         order_id += 1
 
-    return spark.createDataFrame(rows, schema_def)
+# DQ failure rows (null required fields) — only added on full load
+dq_failures = []
+if load_mode == "full":
+    null_rows = [
+        # null order_id
+        [None,         1,    "99.99",  "pending",   BASE_DATE, BASE_DATE.date()],
+        [None,         2,    "49.99",  "confirmed", BASE_DATE, BASE_DATE.date()],
+        # null customer_id
+        [order_id,     None, "120.00", "shipped",   BASE_DATE, BASE_DATE.date()],
+        [order_id + 1, None, "200.00", "delivered", BASE_DATE, BASE_DATE.date()],
+        # null amount
+        [order_id + 2, 3,    None,     "pending",   BASE_DATE, BASE_DATE.date()],
+        [order_id + 3, 4,    None,     "cancelled", BASE_DATE, BASE_DATE.date()],
+    ]
+    for r in null_rows:
+        if sd_column:
+            r.append(False)
+        dq_failures.append(tuple(r))
+
+rows.extend(dq_failures)
 
 # COMMAND ----------
 
-if load_mode == "full":
-    df         = generate_full_orders()
-    write_mode = "overwrite"
-    print(f"  — {NUM_CUSTOMERS * ORDERS_PER_CUSTOMER} base orders (× 2 with duplicates) + DQ failure rows")
-else:
+df = spark.createDataFrame(rows, schema_def)
+
+# ── Apply incremental date filter ─────────────────────────────────────────────
+if load_mode == "incremental":
     if not start_date:
         raise ValueError("load_mode=incremental requires start_date to be set")
-    df         = generate_incremental_orders(start_date, end_date)
-    write_mode = "append"
-    print(f"  — incremental window: process_date >= {start_date}" + (f"  AND <= {end_date}" if end_date else ""))
+    df = df.filter(F.col("process_date") >= F.lit(start_date))
+    if end_date:
+        df = df.filter(F.col("process_date") <= F.lit(end_date))
 
+write_mode = "overwrite" if load_mode == "full" else "append"
 df.write.format("delta").mode(write_mode).saveAsTable(bronze_table)
+
 print(f"Wrote {df.count()} rows to {bronze_table} (mode={write_mode})")
+if load_mode == "incremental":
+    print(f"  — date filter: process_date >= {start_date}" + (f"  AND <= {end_date}" if end_date else ""))
+else:
+    print(f"  — {NUM_CUSTOMERS * ORDERS_PER_CUSTOMER} base orders (× 2 with duplicates)")
+    print(f"  — {len(dq_failures)} DQ failure rows (null fields)")
 
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {bronze_table} ORDER BY order_id, order_date DESC").display()
-
-# COMMAND ----------
-
-

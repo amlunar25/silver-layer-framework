@@ -40,6 +40,10 @@ project_root = dbutils.widgets.get("project_root")
 
 # COMMAND ----------
 
+pip install pyyaml
+
+# COMMAND ----------
+
 from silver_framework.config_loader import load_config
 
 # COMMAND ----------
@@ -120,6 +124,12 @@ print(f"Ingestion audit table ready: {ingestion_audit_table}")
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC truncate table silver_sandbox.accelerator.audit_log;
+# MAGIC truncate table silver_sandbox.accelerator.ingestion_audit_log;
+
+# COMMAND ----------
+
 spark.sql(f"SELECT * FROM {audit_table} ORDER BY timestamp DESC LIMIT 20").display()
 
 # COMMAND ----------
@@ -130,3 +140,7 @@ spark.sql(f"SELECT * FROM {audit_table} ORDER BY timestamp DESC LIMIT 20").displ
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {ingestion_audit_table} ORDER BY updated_ts DESC LIMIT 20").display()
+
+# COMMAND ----------
+
+
