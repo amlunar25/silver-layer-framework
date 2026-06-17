@@ -44,11 +44,14 @@ project_root = dbutils.widgets.get("project_root")
 
 # COMMAND ----------
 
-%pip install -q -e $project_root
+# MAGIC %pip install -q -e $project_root
 
 # COMMAND ----------
 
 import os
+import sys
+sys.path.append("/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework/src")
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict
 
@@ -235,3 +238,7 @@ spark.sql(f"SELECT * FROM {orders_cfg['silver_table']} ORDER BY order_id").displ
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {customer_cfg['audit_table']} ORDER BY timestamp DESC").display()
+
+# COMMAND ----------
+
+spark.sql(f"SELECT * FROM silver_sandbox.accelerator.ingestion_audit_log order by updated_ts desc").display()

@@ -44,7 +44,7 @@ project_root = dbutils.widgets.get("project_root")
 
 # COMMAND ----------
 
-%pip install -q -e $project_root
+# MAGIC %pip install -q -e $project_root
 
 # COMMAND ----------
 
@@ -241,6 +241,8 @@ def generate_incremental_orders(proc_start_date: str, proc_end_date: str = None)
 
 # COMMAND ----------
 
+# load_mode = 'incremental'
+# start_data = '2025-01-01'
 if load_mode == "full":
     df         = generate_full_orders()
     write_mode = "overwrite"
@@ -258,5 +260,3 @@ print(f"Wrote {df.count()} rows to {bronze_table} (mode={write_mode})")
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {bronze_table} ORDER BY order_id, order_date DESC").display()
-
-# COMMAND ----------

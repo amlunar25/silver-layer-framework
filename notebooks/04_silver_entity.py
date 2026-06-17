@@ -41,7 +41,7 @@ project_root = dbutils.widgets.get("project_root")
 
 # COMMAND ----------
 
-%pip install -q -e $project_root
+# MAGIC %pip install -q -e $project_root
 
 # COMMAND ----------
 
@@ -52,6 +52,8 @@ project_root = dbutils.widgets.get("project_root")
 
 # COMMAND ----------
 
+import sys
+sys.path.append("/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework/src")
 from silver_framework.config_loader import load_config
 from silver_framework.pipeline_runner import run_entity
 
