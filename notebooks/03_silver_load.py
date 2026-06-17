@@ -40,10 +40,13 @@ dbutils.widgets.text("orders_end_date",      "",                                
 
 # COMMAND ----------
 
+<<<<<<< HEAD
 pip install pyyaml
 
 # COMMAND ----------
 
+=======
+>>>>>>> parent of 34780f8 (Adding incremental test)
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed

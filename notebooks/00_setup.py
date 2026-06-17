@@ -25,16 +25,11 @@ dbutils.widgets.text("project_root", "/Workspace/Users/alexander.luna@factored.a
 
 # COMMAND ----------
 
-project_root = dbutils.widgets.get("project_root")
-
-# COMMAND ----------
-
-%pip install -q -e $project_root
-
-# COMMAND ----------
-
 import os
+import sys
+
 project_root = dbutils.widgets.get("project_root")
+sys.path.insert(0, f"{project_root}/src")
 %load_ext autoreload
 %autoreload 2
 

@@ -40,10 +40,13 @@ dbutils.widgets.text("end_date",   "", "Incremental End Date   (YYYY-MM-DD, incl
 
 # COMMAND ----------
 
+<<<<<<< HEAD
 pip install pyyaml
 
 # COMMAND ----------
 
+=======
+>>>>>>> parent of 34780f8 (Adding incremental test)
 import os
 import sys
 

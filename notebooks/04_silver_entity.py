@@ -37,16 +37,11 @@ dbutils.widgets.dropdown("force_key_reconciliation", "false", ["true", "false"],
 
 # COMMAND ----------
 
-project_root = dbutils.widgets.get("project_root")
-
-# COMMAND ----------
-
-%pip install -q -e $project_root
-
-# COMMAND ----------
-
 import os
+import sys
+
 project_root = dbutils.widgets.get("project_root")
+sys.path.insert(0, f"{project_root}/src")
 %load_ext autoreload
 %autoreload 2
 
