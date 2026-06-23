@@ -78,6 +78,11 @@ def apply_soft_delete(df: DataFrame, config: Dict[str, Any]) -> DataFrame:
         return df
 
     col_name: str = sd_config["column"]
+
+    if col_name not in df.columns:
+        _log.warning("Soft delete column '%s' not found in DataFrame — skipping", col_name)
+        return df
+
     delete_value = sd_config["value"]
     _log.info("Filtering out records where %s = %s", col_name, delete_value)
     return df.filter(F.col(col_name) != F.lit(delete_value))
@@ -113,3 +118,26 @@ def upsert_to_silver(
         .whenNotMatchedInsert(values=insert_values)
         .execute()
     )
+
+
+def get_merge_metrics(spark: SparkSession, silver_table: str) -> Dict[str, int]:
+    """Read inserted/updated row counts from the latest Delta MERGE operation.
+
+    Queries the last entry in the Delta transaction history of silver_table.
+    Returns zeros if the history cannot be read (e.g. on a local test session).
+    """
+    from delta.tables import DeltaTable
+    try:
+        metrics = (
+            DeltaTable.forName(spark, silver_table)
+            .history(1)
+            .select("operationMetrics")
+            .collect()[0][0]
+        )
+        return {
+            "inserted": int(metrics.get("numTargetRowsInserted", 0)),
+            "updated":  int(metrics.get("numTargetRowsUpdated",  0)),
+        }
+    except Exception as exc:
+        _log.warning("Could not read merge metrics from '%s': %s", silver_table, exc)
+        return {"inserted": 0, "updated": 0}

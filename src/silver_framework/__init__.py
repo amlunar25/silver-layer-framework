@@ -4,7 +4,7 @@ from silver_framework.transformations import apply_transformations
 from silver_framework.dq_framework import apply_dq_checks
 from silver_framework.schema_enforcement import enforce_schema
 from silver_framework.silver_connector import deduplicate, apply_soft_delete, ensure_silver_table, upsert_to_silver
-from silver_framework.audit_logger import log_audit
+from silver_framework.audit_logger import log_dq_audit, log_ingestion_audit
 from silver_framework.pipeline_runner import run_entity, run_entities_parallel
 from silver_framework.logger import get_logger
 from silver_framework.retry import with_retry
@@ -19,7 +19,8 @@ __all__ = [
     "apply_soft_delete",
     "ensure_silver_table",
     "upsert_to_silver",
-    "log_audit",
+    "log_dq_audit",
+    "log_ingestion_audit",
     "run_entity",
     "run_entities_parallel",
     "get_logger",

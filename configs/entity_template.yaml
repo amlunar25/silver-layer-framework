@@ -1,0 +1,185 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Silver Layer Framework — Entity Configuration Template
+#
+# MANDATORY fields must be present for the pipeline to run.
+# OPTIONAL fields have defaults and can be omitted entirely.
+#
+# Copy this file to configs/entities/<your_entity>.yaml and fill in the values.
+# No Python changes are required when adding a new entity.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# ── Identity ──────────────────────────────────────────────────────────────────
+# [MANDATORY] Logical name used in logs and audit records.
+entity: <entity_name>
+
+# [MANDATORY] Fully-qualified Delta table names: <catalog>.<schema>.<table>
+bronze_table:         <catalog>.<schema>.<table>
+silver_table:         <catalog>.<schema>.<table>
+audit_table:          <catalog>.<schema>.audit_log
+ingestion_audit_table: <catalog>.<schema>.ingestion_audit_log
+
+
+# ── Extraction ────────────────────────────────────────────────────────────────
+# [OPTIONAL] Controls how records are read from the bronze table.
+# Defaults when omitted: mode=full_scan, filter_column=process_date
+extraction:
+  # [OPTIONAL] full_scan — read all rows every run
+  #            incremental — read only rows where filter_column >= last silver max
+  mode: full_scan           # full_scan | incremental
+
+  # [OPTIONAL — required when mode=incremental]
+  # Column used to filter the bronze table on incremental runs.
+  # Must be a date or timestamp column present in the bronze table.
+  filter_column: process_date
+
+
+# ── Schema ────────────────────────────────────────────────────────────────────
+# [MANDATORY] Declare every column that should appear in the silver table.
+# Columns present in bronze but absent here are dropped.
+# Columns declared here but absent in bronze are handled by schema_enforcement.
+schema:
+  - name: <column_name>     # [MANDATORY] column name (snake_case recommended)
+    type: <type>            # [MANDATORY] string | integer | int | long | bigint |
+                            #             float | double | boolean | bool |
+                            #             timestamp | date
+
+
+# ── Schema Enforcement ────────────────────────────────────────────────────────
+# [OPTIONAL] Controls behaviour when a declared column is absent from the source.
+# Defaults when omitted: add_missing_columns=false
+schema_enforcement:
+  # [OPTIONAL]
+  # false (default) — log a WARNING and skip the missing column; it will not
+  #                   appear in the output DataFrame.
+  # true            — add the missing column as a null literal cast to the
+  #                   declared type.
+  add_missing_columns: false
+
+
+# ── Primary Keys ──────────────────────────────────────────────────────────────
+# [MANDATORY] One or more columns that uniquely identify a record.
+# Used for deduplication, the Delta MERGE condition, and key reconciliation.
+primary_keys:
+  - <column_name>
+  # - <column_name>   # add more columns for composite keys
+
+
+# ── Deduplication ─────────────────────────────────────────────────────────────
+# [MANDATORY] Window ordering to keep the single latest record per primary key.
+# Evaluated before schema enforcement and soft delete.
+deduplication:
+  order_by:
+    - column: <column_name>   # [MANDATORY] column to sort by
+      direction: desc         # [MANDATORY] desc | asc
+    # - column: process_date  # tie-breaker (recommended second sort)
+    #   direction: desc
+
+
+# ── Soft Delete ───────────────────────────────────────────────────────────────
+# [OPTIONAL] Two independent mechanisms — use one, both, or neither.
+
+soft_delete:
+  # ── Flag-based soft delete ─────────────────────────────────────────────────
+  # Filters rows where a source-provided column equals the delete signal.
+  # Runs on every pipeline execution.
+
+  # [OPTIONAL — default false] Set true to activate flag-based filtering.
+  enabled: false
+
+  # [OPTIONAL — required when enabled=true]
+  # Column in the bronze table that carries the deletion signal.
+  column: is_deleted
+
+  # [OPTIONAL — required when enabled=true]
+  # Value that marks a row as deleted.
+  value: true
+
+  # ── Key reconciliation ─────────────────────────────────────────────────────
+  # Detects silver rows whose primary keys no longer exist in bronze.
+  # Activated by the presence of this sub-block; remove the block to disable.
+  # Runs on a configurable schedule, independent of the flag-based filter.
+
+  key_reconciliation:
+    # [MANDATORY within block]
+    # mark   — sets soft_delete.column=true on stale rows via Delta MERGE UPDATE.
+    #          Requires soft_delete.column to be defined above.
+    # remove — physically deletes stale rows via Delta MERGE DELETE.
+    #          Does not require a delete column.
+    strategy: mark            # mark | remove
+
+    # [MANDATORY within block] Schedule for the reconciliation job.
+    frequency:
+      # [MANDATORY] weekly | monthly | specific_date | dates
+      type: weekly
+
+      # ── weekly ─────────────────────────────────────────────────────────────
+      # [MANDATORY when type=weekly]
+      # monday | tuesday | wednesday | thursday | friday | saturday | sunday
+      day_of_week: monday
+
+      # ── monthly ────────────────────────────────────────────────────────────
+      # [MANDATORY when type=monthly] Day of the month (1–28).
+      # day_of_month: 1
+
+      # ── specific_date ──────────────────────────────────────────────────────
+      # [MANDATORY when type=specific_date] ISO date string.
+      # date: "2025-12-31"
+
+      # ── dates ──────────────────────────────────────────────────────────────
+      # [MANDATORY when type=dates] List of ISO date strings.
+      # dates:
+      #   - "2025-01-01"
+      #   - "2025-04-01"
+
+
+# ── Data Quality Checks ───────────────────────────────────────────────────────
+# [OPTIONAL] List of column-level checks. Failing rows are quarantined.
+# Omit the block entirely to skip DQ checks.
+dq_checks:
+  # not_null — rejects rows where column IS NULL
+  - column: <column_name>   # [MANDATORY] column to check
+    type: not_null          # [MANDATORY] not_null | regex
+
+  # regex — rejects rows where column does not match the pattern
+  # - column: <column_name>
+  #   type: regex
+  #   pattern: "<regex>"   # [MANDATORY when type=regex] Java-compatible regex
+
+
+# ── Custom Transformations ────────────────────────────────────────────────────
+# [OPTIONAL] Column-level transformations applied after base normalisation
+# (column name snake_case + string trim) and before DQ checks.
+# Omit the block entirely to skip custom transformations.
+transformations:
+  - name: <transformation_name>   # [MANDATORY] see available functions below
+    column: <column_name>         # [MANDATORY] source column the transformation reads from
+    new_column_name: <new_col>    # [OPTIONAL]  when set, the result is written to this new
+                                  #             column and the source column is left unchanged.
+                                  #             Omit (or leave blank) to overwrite the source.
+
+  # Available transformation names:
+  #
+  # convert_to_est / EST_time
+  #   Converts a UTC timestamp column to America/New_York (EST/EDT).
+  #   Column must be TimestampType — DateType columns cannot be converted.
+  #
+  # trim_left_zeros
+  #   Removes leading zeros from a string representation.
+  #   e.g. "0123-456-7890" → "123-456-7890"
+  #
+  # trim_right_zeros
+  #   Removes trailing zeros from a decimal string representation.
+  #   e.g. "85.00" → "85"  |  "102.50" → "102.5"
+  #
+  # trim_left
+  #   Strips leading whitespace.
+  #
+  # trim_right
+  #   Strips trailing whitespace.
+  #
+  # to_uppercase
+  #   Converts a string column to upper case.  e.g. "pending" → "PENDING"
+  #
+  # to_lowercase
+  #   Converts a string column to lower case.  e.g. "ACTIVE" → "active"

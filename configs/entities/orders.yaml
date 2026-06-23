@@ -1,7 +1,12 @@
 entity: orders
-bronze_table: bronze_sandbox.test_silver..orders
-silver_table: silver_sandbox.test_silver.orders
-audit_table: silver_sandbox.test_silver.audit_log
+bronze_table: bronze_sandbox.accelerator.orders
+silver_table: silver_sandbox.accelerator.orders
+audit_table: silver_sandbox.accelerator.audit_log
+ingestion_audit_table: silver_sandbox.accelerator.ingestion_audit_log
+
+extraction:
+  mode: incremental        # full_scan | incremental
+  filter_column: process_date
 
 schema:
   - name: order_id
@@ -19,6 +24,9 @@ schema:
   - name: is_deleted
     type: boolean
 
+schema_enforcement:
+  add_missing_columns: true   # default false (warn and skip); true: add missing cols as null
+
 primary_keys:
   - order_id
 
@@ -33,6 +41,11 @@ soft_delete:
   enabled: true
   column: is_deleted
   value: true
+  key_reconciliation:
+    strategy: remove           # remove — physically deletes stale rows from silver
+    frequency:
+      type: monthly
+      day_of_month: 1          # runs on the 1st of every month
 
 dq_checks:
   - column: order_id
@@ -41,3 +54,11 @@ dq_checks:
     type: not_null
   - column: amount
     type: not_null
+
+transformations:
+  - name: convert_to_est
+    column: order_date       # UTC timestamp → America/New_York (EST/EDT); process_date is DateType — cannot convert
+  - name: trim_right_zeros
+    column: amount           # "100.50" → "100.5", "85.00" → "85" (bronze stores amount as string)
+  - name: to_uppercase
+    column: status           # "pending" → "PENDING"

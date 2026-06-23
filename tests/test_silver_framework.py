@@ -133,7 +133,7 @@ class TestSchemaEnforcement:
             {"name": "name", "type": "string"},
         ]
 
-        result = enforce_schema(df, target)
+        result = enforce_schema(df, target, add_missing_columns=True)
 
         assert "name" in result.columns
         assert result.collect()[0]["name"] is None
