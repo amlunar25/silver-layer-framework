@@ -20,7 +20,7 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("config_path",  "configs/entities/customer.yaml",                                "Config Path (any entity)")
+dbutils.widgets.text("config_path",  "source_configs/sandbox/customer.yml",                                "Config Path (any entity)")
 dbutils.widgets.text("project_root", "/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework", "Project Root")
 
 # COMMAND ----------
@@ -55,17 +55,18 @@ silver_table          = config["silver_table"]
 audit_table           = config["audit_table"]
 ingestion_audit_table = config["ingestion_audit_table"]
 
-silver_catalog, silver_schema, _ = silver_table.split(".")
+# Namespace = everything before the table name. Handles both three-part
+# (catalog.schema.table) and two-part (schema.table) silver table names.
+silver_namespace = ".".join(silver_table.split(".")[:-1])
 
-print(f"silver_catalog        : {silver_catalog}")
-print(f"silver_schema         : {silver_schema}")
+print(f"silver_namespace      : {silver_namespace}")
 print(f"audit_table           : {audit_table}")
 print(f"ingestion_audit_table : {ingestion_audit_table}")
 
 # COMMAND ----------
 
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {silver_catalog}.{silver_schema}")
-print(f"Schema ready: {silver_catalog}.{silver_schema}")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {silver_namespace}")
+print(f"Schema ready: {silver_namespace}")
 
 # COMMAND ----------
 
@@ -132,3 +133,7 @@ spark.sql(f"SELECT * FROM {audit_table} ORDER BY timestamp DESC LIMIT 20").displ
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {ingestion_audit_table} ORDER BY updated_ts DESC LIMIT 20").display()
+
+# COMMAND ----------
+
+

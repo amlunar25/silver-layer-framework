@@ -43,7 +43,7 @@ from silver_framework.pipeline_runner import run_entity
 
 result = run_entity(
     spark,
-    config_path="configs/entities/customer.yaml",
+    config_path="source_configs/sandbox/customer.yml",
 )
 ```
 
@@ -101,8 +101,8 @@ from silver_framework.pipeline_runner import run_entities_parallel
 results = run_entities_parallel(
     spark,
     config_paths=[
-        "configs/entities/customer.yaml",
-        "configs/entities/orders.yaml",
+        "source_configs/sandbox/customer.yml",
+        "source_configs/sandbox/orders.yml",
     ],
     max_workers=4,
     use_cache=False,
@@ -448,7 +448,7 @@ Open `notebooks/01_bronze_customer` and set the widgets:
 
 | Widget | Default | Description |
 |--------|---------|-------------|
-| `config_path` | `configs/entities/customer.yaml` | YAML that defines `bronze_table`, `silver_table`, and `audit_table` |
+| `config_path` | `source_configs/sandbox/customer.yml` | YAML that defines `bronze_table`, `silver_table`, and `audit_table` |
 | `project_root` | `/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework` | Absolute workspace path to the project root |
 
 **Run all cells.** The notebook will:
@@ -465,7 +465,7 @@ Open `notebooks/02_bronze_orders` and set the widgets:
 
 | Widget | Default | Description |
 |--------|---------|-------------|
-| `config_path` | `configs/entities/orders.yaml` | YAML that defines the orders tables |
+| `config_path` | `source_configs/sandbox/orders.yml` | YAML that defines the orders tables |
 | `project_root` | `/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework` | Absolute workspace path to the project root |
 
 **Run all cells.** The notebook will:
@@ -482,8 +482,8 @@ Open `notebooks/03_silver_load` and set the widgets:
 
 | Widget | Default | Description |
 |--------|---------|-------------|
-| `customer_config_path` | `configs/entities/customer.yaml` | Customer entity config |
-| `orders_config_path` | `configs/entities/orders.yaml` | Orders entity config |
+| `customer_config_path` | `source_configs/sandbox/customer.yml` | Customer entity config |
+| `orders_config_path` | `source_configs/sandbox/orders.yml` | Orders entity config |
 | `project_root` | `/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework` | Absolute workspace path to the project root |
 | `run_setup` | `false` | Set to `true` to call notebooks 01 and 02 automatically before running the pipeline |
 | `drop_silver_tables` | `true` | Drop silver tables before the run so each execution starts clean |
@@ -602,45 +602,69 @@ Tests for `silver_framework.retry.with_retry`.
 
 ## How to Add a New Entity
 
-1. Create `configs/entities/<entity_name>.yaml` following the structure below.
+1. Create `source_configs/<source_name>/<source_name>_<table_name>.yml` following the
+   structure below. Use `source_configs/source_1/source_1_table_1.yml` as the reference template.
 2. No Python changes required.
 
-### YAML schema
+### Config format
+
+Configs use a nested, source-oriented format. `config_loader.load_config` **normalizes**
+it into the internal contract at load time:
+
+- `entity` is derived as `<source.name>_<source.table>`.
+- `bronze_table` is assembled from `bronze_table.{catalog,schema,table_name}` (empty parts
+  are skipped, so both `catalog.schema.table` and `schema.table` work).
+- `silver_table`, `audit_table`, and `ingestion_audit_table` are **derived** from the bronze
+  location by swapping the `bronze` prefix for `silver` and appending fixed audit table names.
+- `extraction.mode: full_refresh` maps to an internal full scan; `incremental` is preserved.
+  The incremental filter column comes from `extraction.watermark.column`.
+- `primary_keys` come from `bronze_table.primary_keys`.
+- Schema column `type` values may be upper- or lower-case (they are normalized).
 
 ```yaml
-entity: <entity_name>
-bronze_table: <catalog>.<schema>.<table>
-silver_table: <catalog>.<schema>.<table>
-audit_table: <catalog>.<schema>.audit_log
-ingestion_audit_table: <catalog>.<schema>.ingestion_audit_log
+source:
+  name: <source_name>          # must match the parent folder name
+  table: <table_name>
+  type: api                    # api | jdbc | file
 
-extraction:
-  mode: full_scan          # full_scan | incremental
-  filter_column: process_date  # column used for date filtering in incremental mode
+bronze_table:
+  catalog: <catalog>           # leave "" for two-part schema.table names
+  schema: <schema>             # bronze prefix → derives the silver namespace
+  table_name: <table>
+  write_mode: merge            # append | overwrite | merge
+  primary_keys:
+    - <col>
 
 schema:
-  - name: <col>
-    type: <string|integer|long|double|boolean|timestamp|date>
+  columns:
+    - name: <col>
+      type: STRING             # STRING | INTEGER | LONG | DOUBLE | BOOLEAN | DATE | TIMESTAMP
+      nullable: true
+      description: ""
 
+extraction:
+  mode: incremental            # incremental | full_refresh
+  watermark:
+    column: process_date       # filter column used on incremental runs
+    format: iso8601
+
+# ── Silver-layer sections ──────────────────────────────────────────────────────
 schema_enforcement:
-  add_missing_columns: false  # default false: warn and skip | true: add missing cols as null
-
-primary_keys:
-  - <col>
+  add_missing_columns: false   # default false: warn and skip | true: add missing cols as null
 
 deduplication:
   order_by:
     - column: <col>
-      direction: desc   # or asc
+      direction: desc          # or asc
 
 soft_delete:
   enabled: true
-  column: <flag_column>   # omit column/value when source has no flag
-  value: true             # records matching this value are excluded
-  key_reconciliation:     # optional — add block to enable; remove to disable
-    strategy: mark        # mark (uses soft_delete.column) | remove
+  column: <flag_column>        # omit column/value when source has no flag
+  value: true                  # records matching this value are excluded
+  key_reconciliation:          # optional — add block to enable; remove to disable
+    strategy: mark             # mark (uses soft_delete.column) | remove
     frequency:
-      type: weekly        # weekly | monthly | specific_date | dates
+      type: weekly             # weekly | monthly | specific_date | dates
       day_of_week: monday
 
 dq_checks:
@@ -649,6 +673,8 @@ dq_checks:
   - column: <col>
     type: regex
     pattern: "<regex>"
+
+transformations: []            # optional; see source_1_table_1.yml for available names
 ```
 
 ### Running the notebook for a new entity
@@ -657,7 +683,7 @@ In `03_silver_load`, add the new config path to the relevant widget and set the 
 
 | Widget | Recommended value | Notes |
 |--------|-------------------|-------|
-| `<entity>_config_path` | `configs/entities/<entity_name>.yaml` | Path to the new YAML |
+| `<entity>_config_path` | `source_configs/<source>/<source>_<table>.yml` | Path to the new YAML |
 | `<entity>_full_scan` | `config` | Let the YAML `extraction.mode` decide |
 | `<entity>_start_date` | _(empty)_ | Auto-detected from `MAX(filter_column)` on incremental runs |
 | `<entity>_end_date` | _(empty)_ | Leave empty unless you need to cap the window |

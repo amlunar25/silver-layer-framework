@@ -1,0 +1,116 @@
+# ─── Source ───────────────────────────────────────────────────────────────────
+# Identifies the upstream system and the logical entity being ingested.
+# One config file per table/entity. Multiple files can live under the same
+# source folder when a system exposes several tables.
+source:
+  name: source_1                              # must match the parent folder name
+  table: table_1                              # logical entity / endpoint name
+  description: "Sample API source — replace with real description"
+  type: api                                   # api | jdbc | file
+  owner:
+    team: ""                                  # e.g. sales | finance | operations
+    contact: ""                               # email or Slack handle
+
+# ─── Bronze Table ─────────────────────────────────────────────────────────────
+# Defines where the raw data lands in the Lakehouse.
+bronze_table:
+  catalog: ""                                 # injected via ${var.catalog} at deploy time
+  schema: ""                                  # target schema / database
+  table_name:                                 # convention: <source>__<table>
+  write_mode: append                          # append | overwrite | merge
+  primary_keys:                               # used only when write_mode: merge
+    - id
+
+# ─── Schema ───────────────────────────────────────────────────────────────────
+# Column definitions used by SchemaEnforcer to build the PySpark StructType.
+# Add columns in the order they should appear in the Delta table.
+schema:
+  columns:
+    - name: id
+      type: STRING
+      nullable: false
+      description: "Unique record identifier from the source system"
+
+    - name: name
+      type: STRING
+      nullable: true
+      description: "Record name"
+
+    # Add more columns here following the same structure
+    # - name: <column_name>
+    #   type: STRING | INTEGER | LONG | DOUBLE | BOOLEAN | DATE | TIMESTAMP
+    #   nullable: true | false
+    #   description: ""
+
+# ─── Connection ───────────────────────────────────────────────────────────────
+# Transport details (base URL, auth, pagination, timeouts) live in the connector
+# class at common/bronze/connectors/source_1_connector.py.
+# Only the endpoint path and any static query params belong here.
+connection:
+  endpoint: "/table_1"
+  # params:                                    # optional static query parameters
+  #   key: value
+
+# ─── Extraction ───────────────────────────────────────────────────────────────
+# Controls how data is pulled: incremental watermark vs. full refresh.
+extraction:
+  mode: incremental                           # incremental | full_refresh
+  watermark:
+    column: updated_at                        # source column used to filter new records
+    format: iso8601                           # iso8601 | epoch_ms | epoch_s
+  full_refresh_cron: "0 2 * * 0"             # cron for periodic full reloads (UTC)
+  batch_size_days: 1                          # days per incremental run
+
+# ─── Schema Enforcement ─────────────────────────────────────────────────────────
+# [OPTIONAL] Behaviour when a declared column is absent from the source.
+# Default when omitted: add_missing_columns=false (warn and skip).
+schema_enforcement:
+  add_missing_columns: false                  # true: add missing cols as null literals
+
+# ─── Deduplication ──────────────────────────────────────────────────────────────
+# [MANDATORY] Window ordering used to keep the single latest record per primary key.
+# Primary keys come from bronze_table.primary_keys above.
+deduplication:
+  order_by:
+    - column: updated_at                      # column to sort by
+      direction: desc                         # desc | asc
+    # - column: process_date                  # recommended tie-breaker
+    #   direction: desc
+
+# ─── Soft Delete ────────────────────────────────────────────────────────────────
+# [OPTIONAL] Two independent mechanisms — use one, both, or neither.
+soft_delete:
+  enabled: false                              # true: filter rows where column == value
+  column: is_deleted                          # source column carrying the delete signal
+  value: true                                 # value that marks a row as deleted
+
+  # Key reconciliation — detect silver rows whose keys no longer exist in bronze.
+  # Remove this block to disable. Runs on the configured schedule.
+  key_reconciliation:
+    strategy: mark                            # mark (set column=true) | remove (delete row)
+    frequency:
+      type: weekly                            # weekly | monthly | specific_date | dates
+      day_of_week: monday                     # weekly:  monday..sunday
+      # day_of_month: 1                       # monthly: 1..28
+      # date: "2025-12-31"                    # specific_date: ISO date
+      # dates: ["2025-01-01", "2025-04-01"]   # dates: list of ISO dates
+
+# ─── Data Quality Checks ────────────────────────────────────────────────────────
+# [OPTIONAL] Column-level checks. Failing rows are quarantined.
+# Omit the block entirely to skip DQ checks.
+dq_checks:
+  - column: id
+    type: not_null                            # not_null | regex
+  # - column: email
+  #   type: regex
+  #   pattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
+
+# ─── Custom Transformations ─────────────────────────────────────────────────────
+# [OPTIONAL] Column-level transformations applied after base normalisation
+# (snake_case column names + string trim) and before DQ checks.
+# Available names: convert_to_est / EST_time, trim_left_zeros, trim_right_zeros,
+# trim_left, trim_right, to_uppercase, to_lowercase.
+transformations: []
+  # - name: to_uppercase
+  #   column: name
+  #   new_column_name: name_upper             # optional; omit to overwrite the source column

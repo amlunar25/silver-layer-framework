@@ -10,7 +10,7 @@
 # MAGIC
 # MAGIC | Widget | Default | Description |
 # MAGIC |--------|---------|-------------|
-# MAGIC | `config_path` | `configs/entities/customer.yaml` | Relative or absolute path to the entity YAML |
+# MAGIC | `config_path` | `source_configs/sandbox/customer.yml` | Relative or absolute path to the source config YAML |
 # MAGIC | `project_root` | `/Workspace/Users/…` | Root of the repo on Databricks |
 # MAGIC | `full_scan` | `config` | `config` = use YAML `extraction.mode`; `true` = force full scan; `false` = force incremental |
 # MAGIC | `start_date` | _(empty)_ | Incremental start date `YYYY-MM-DD` (auto-detected from silver MAX when blank) |
@@ -26,7 +26,7 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text(    "config_path",          "configs/entities/customer.yaml",                                "Config Path")
+dbutils.widgets.text(    "config_path",          "source_configs/sandbox/customer.yml",                                "Config Path")
 dbutils.widgets.text(    "project_root",         "/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework", "Project Root")
 dbutils.widgets.dropdown("full_scan",            "config", ["config", "true", "false"],                         "Full Scan Override")
 dbutils.widgets.text(    "start_date",           "",                                                             "Extraction Start Date (YYYY-MM-DD)")

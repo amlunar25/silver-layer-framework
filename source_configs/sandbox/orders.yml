@@ -1,0 +1,99 @@
+# ─── Source ───────────────────────────────────────────────────────────────────
+source:
+  name: sandbox                               # must match the parent folder name
+  table: orders
+  description: "Orders entity — local/sandbox migration of the flat config"
+  type: file
+  owner:
+    team: accelerator
+    contact: ""
+
+# ─── Bronze Table ─────────────────────────────────────────────────────────────
+# catalog is empty for local two-part names → resolves to bronze.orders
+bronze_table:
+  catalog: accelerator_test
+  schema: bronze
+  table_name: orders
+  write_mode: merge
+  primary_keys:
+    - order_id
+
+# ─── Schema ───────────────────────────────────────────────────────────────────
+schema:
+  columns:
+    - name: order_id
+      type: INTEGER
+      nullable: false
+      description: "Unique order identifier"
+    - name: customer_id
+      type: INTEGER
+      nullable: true
+      description: "Owning customer identifier"
+    - name: amount
+      type: DOUBLE
+      nullable: true
+      description: "Order amount"
+    - name: status
+      type: STRING
+      nullable: true
+      description: "Order status"
+    - name: order_date
+      type: TIMESTAMP
+      nullable: true
+      description: "Order timestamp"
+    - name: process_date
+      type: DATE
+      nullable: true
+      description: "Ingestion process date (partition column)"
+    - name: is_deleted
+      type: BOOLEAN
+      nullable: true
+      description: "Soft-delete flag from the source"
+
+# ─── Extraction ───────────────────────────────────────────────────────────────
+extraction:
+  mode: incremental
+  watermark:
+    column: process_date
+    format: iso8601
+
+# ─── Schema Enforcement ─────────────────────────────────────────────────────────
+schema_enforcement:
+  add_missing_columns: true
+
+# ─── Deduplication ──────────────────────────────────────────────────────────────
+deduplication:
+  order_by:
+    - column: order_date
+      direction: desc
+    - column: process_date
+      direction: desc
+
+# ─── Soft Delete ────────────────────────────────────────────────────────────────
+soft_delete:
+  enabled: true
+  column: is_deleted
+  value: true
+  key_reconciliation:
+    strategy: remove
+    frequency:
+      type: monthly
+      day_of_month: 1
+
+# ─── Data Quality Checks ────────────────────────────────────────────────────────
+dq_checks:
+  - column: order_id
+    type: not_null
+  - column: customer_id
+    type: not_null
+  - column: amount
+    type: not_null
+
+# ─── Custom Transformations ─────────────────────────────────────────────────────
+transformations:
+  - name: convert_to_est
+    column: order_date
+  - name: trim_right_zeros
+    column: amount
+  - name: to_uppercase
+    column: status
