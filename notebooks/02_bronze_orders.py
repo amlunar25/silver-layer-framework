@@ -262,3 +262,7 @@ print(f"Wrote {df.count()} rows to {bronze_table} (mode={write_mode})")
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {bronze_table} ORDER BY order_id, order_date DESC").display()
+
+# COMMAND ----------
+
+

@@ -242,3 +242,7 @@ spark.sql(f"SELECT * FROM {customer_cfg['audit_table']} ORDER BY timestamp DESC"
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM silver_sandbox.accelerator.ingestion_audit_log order by updated_ts desc").display()
+
+# COMMAND ----------
+
+

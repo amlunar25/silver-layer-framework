@@ -133,3 +133,7 @@ spark.sql(f"SELECT * FROM {audit_table} ORDER BY timestamp DESC LIMIT 20").displ
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {ingestion_audit_table} ORDER BY updated_ts DESC LIMIT 20").display()
+
+# COMMAND ----------
+
+

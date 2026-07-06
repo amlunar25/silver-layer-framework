@@ -31,7 +31,7 @@ project_root = dbutils.widgets.get("project_root")
 
 # COMMAND ----------
 
-%pip install -q -e $project_root
+# MAGIC %pip install -q -e $project_root
 
 # COMMAND ----------
 
@@ -164,3 +164,7 @@ print(f"Wrote {df.count()} rows to {bronze_table} (mode={write_mode})")
 # COMMAND ----------
 
 spark.sql(f"SELECT * FROM {bronze_table} ORDER BY customer_id, updated_at DESC").display()
+
+# COMMAND ----------
+
+

@@ -11,7 +11,7 @@ source:
 # ─── Bronze Table ─────────────────────────────────────────────────────────────
 # catalog is empty for local two-part names → resolves to bronze.customers
 bronze_table:
-  catalog: ""
+  catalog: accelerator_test
   schema: bronze
   table_name: customers
   write_mode: merge
