@@ -21,12 +21,12 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
-from silver_framework.audit_logger import _AUDIT_SCHEMA
+from silver_framework.audit_logger import _DQ_AUDIT_SCHEMA, _INGESTION_AUDIT_SCHEMA
 from silver_framework.pipeline_runner import run_entities_parallel
 
 WAREHOUSE_DIR = "/tmp/silver-framework-warehouse"
-CONFIG_CUSTOMERS = "configs/entities/customer.yaml"
-CONFIG_ORDERS = "configs/entities/orders.yaml"
+CONFIG_CUSTOMERS = "source_configs/sandbox/customer.yml"
+CONFIG_ORDERS = "source_configs/sandbox/orders.yml"
 
 
 def create_spark_session() -> SparkSession:
@@ -71,10 +71,17 @@ def seed_bronze_customers(spark: SparkSession) -> None:
 
 
 def _ensure_audit_table(spark: SparkSession) -> None:
-    """Create an empty audit Delta table so parallel entities can append safely."""
-    audit_table = "silver.audit_log"
-    if not spark.catalog.tableExists(audit_table):
-        spark.createDataFrame([], _AUDIT_SCHEMA).write.format("delta").saveAsTable(audit_table)
+    """Pre-create the shared audit Delta tables so parallel entities can append safely.
+
+    Both the DQ audit and ingestion audit tables are created up front to avoid a
+    race where two entities try to create the same table simultaneously.
+    """
+    for table, schema in (
+        ("silver.audit_log", _DQ_AUDIT_SCHEMA),
+        ("silver.ingestion_audit_log", _INGESTION_AUDIT_SCHEMA),
+    ):
+        if not spark.catalog.tableExists(table):
+            spark.createDataFrame([], schema).write.format("delta").saveAsTable(table)
 
 
 def seed_bronze_orders(spark: SparkSession) -> None:

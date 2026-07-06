@@ -32,7 +32,7 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("config_path",  "configs/entities/orders.yaml",                                "Config Path")
+dbutils.widgets.text("config_path",  "source_configs/sandbox/orders.yml",                                "Config Path")
 dbutils.widgets.text("project_root", "/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework", "Project Root")
 dbutils.widgets.dropdown("load_mode", "full", ["full", "incremental"], "Load Mode")
 dbutils.widgets.text("start_date", "", "Incremental Start Date (YYYY-MM-DD, inclusive)")
@@ -49,7 +49,9 @@ project_root = dbutils.widgets.get("project_root")
 # COMMAND ----------
 
 import os
-import yaml
+import sys
+sys.path.append(os.path.join(project_root, "src"))
+from silver_framework.config_loader import load_config
 project_root = dbutils.widgets.get("project_root")
 %load_ext autoreload
 %autoreload 2
@@ -76,15 +78,15 @@ from pyspark.sql.types import (
 config_path = dbutils.widgets.get("config_path")
 full_path   = config_path if config_path.startswith("/") else os.path.join(project_root, config_path)
 
-with open(full_path) as f:
-    config = yaml.safe_load(f)
+config = load_config(full_path)
 
 bronze_table = config["bronze_table"]
 silver_table = config["silver_table"]
 audit_table  = config["audit_table"]
 
-bronze_catalog, bronze_schema, _ = bronze_table.split(".")
-silver_catalog, silver_schema, _ = silver_table.split(".")
+# Namespace = everything before the table name. Handles both three-part
+# (catalog.schema.table) and two-part (schema.table) table names.
+bronze_namespace = ".".join(bronze_table.split(".")[:-1])
 
 # ── Read load settings ────────────────────────────────────────────────────────
 load_mode  = dbutils.widgets.get("load_mode")
@@ -97,7 +99,7 @@ print(f"start_date   : {start_date}   end_date: {end_date}")
 
 # COMMAND ----------
 
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {bronze_catalog}.{bronze_schema}")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {bronze_namespace}")
 
 # COMMAND ----------
 

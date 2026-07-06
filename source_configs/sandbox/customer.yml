@@ -1,0 +1,101 @@
+# ─── Source ───────────────────────────────────────────────────────────────────
+source:
+  name: sandbox                               # must match the parent folder name
+  table: customer
+  description: "Customer entity — local/sandbox migration of the flat config"
+  type: file
+  owner:
+    team: accelerator
+    contact: ""
+
+# ─── Bronze Table ─────────────────────────────────────────────────────────────
+# catalog is empty for local two-part names → resolves to bronze.customers
+bronze_table:
+  catalog: ""
+  schema: bronze
+  table_name: customers
+  write_mode: merge
+  primary_keys:
+    - customer_id
+
+# ─── Schema ───────────────────────────────────────────────────────────────────
+schema:
+  columns:
+    - name: customer_id
+      type: INTEGER
+      nullable: false
+      description: "Unique customer identifier"
+    - name: email
+      type: STRING
+      nullable: true
+      description: "Customer email address"
+    - name: name
+      type: STRING
+      nullable: true
+      description: "Customer name"
+    - name: phone
+      type: STRING
+      nullable: true
+      description: "Customer phone number"
+    - name: updated_at
+      type: TIMESTAMP
+      nullable: true
+      description: "Source last-updated timestamp"
+    - name: process_date
+      type: DATE
+      nullable: true
+      description: "Ingestion process date (partition column)"
+    - name: is_deleted
+      type: BOOLEAN
+      nullable: true
+      description: "Soft-delete flag from the source"
+
+# ─── Extraction ───────────────────────────────────────────────────────────────
+extraction:
+  mode: full_refresh                          # full_refresh → full_scan internally
+  watermark:
+    column: process_date
+    format: iso8601
+
+# ─── Schema Enforcement ─────────────────────────────────────────────────────────
+schema_enforcement:
+  add_missing_columns: true
+
+# ─── Deduplication ──────────────────────────────────────────────────────────────
+deduplication:
+  order_by:
+    - column: updated_at
+      direction: desc
+    - column: process_date
+      direction: desc
+
+# ─── Soft Delete ────────────────────────────────────────────────────────────────
+soft_delete:
+  enabled: true
+  column: is_deleted
+  value: true
+  key_reconciliation:
+    strategy: mark
+    frequency:
+      type: weekly
+      day_of_week: monday
+
+# ─── Data Quality Checks ────────────────────────────────────────────────────────
+dq_checks:
+  - column: customer_id
+    type: not_null
+  - column: email
+    type: not_null
+  - column: email
+    type: regex
+    pattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
+
+# ─── Custom Transformations ─────────────────────────────────────────────────────
+transformations:
+  - name: convert_to_est
+    column: updated_at
+  - name: trim_left_zeros
+    column: phone
+  - name: to_uppercase
+    column: name
+    new_column_name: name_upper

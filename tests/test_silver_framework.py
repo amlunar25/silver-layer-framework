@@ -19,6 +19,7 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from silver_framework.config_loader import _normalize_source_config
 from silver_framework.dq_framework import apply_dq_checks
 from silver_framework.retry import with_retry
 from silver_framework.schema_enforcement import enforce_schema
@@ -345,3 +346,82 @@ class TestRetry:
             pass
 
         assert my_function.__name__ == "my_function"
+
+
+# ── Source Config Normalizer ────────────────────────────────────────────────────
+
+class TestSourceConfigNormalizer:
+    def _raw(self) -> dict:
+        return {
+            "source": {"name": "source_1", "table": "table_1"},
+            "bronze_table": {
+                "catalog": "bronze_sandbox",
+                "schema": "accelerator",
+                "table_name": "table_1",
+                "write_mode": "merge",
+                "primary_keys": ["id"],
+            },
+            "schema": {
+                "columns": [
+                    {"name": "id", "type": "STRING", "nullable": False},
+                    {"name": "amount", "type": "DOUBLE", "nullable": True},
+                ]
+            },
+            "extraction": {
+                "mode": "full_refresh",
+                "watermark": {"column": "updated_at"},
+            },
+            "deduplication": {"order_by": [{"column": "updated_at", "direction": "desc"}]},
+            "dq_checks": [{"column": "id", "type": "not_null"}],
+        }
+
+    def test_entity_derived_from_source(self) -> None:
+        cfg = _normalize_source_config(self._raw())
+        assert cfg["entity"] == "source_1_table_1"
+
+    def test_table_names_derived_from_bronze(self) -> None:
+        cfg = _normalize_source_config(self._raw())
+        assert cfg["bronze_table"] == "bronze_sandbox.accelerator.table_1"
+        assert cfg["silver_table"] == "silver_sandbox.accelerator.table_1"
+        assert cfg["audit_table"] == "silver_sandbox.accelerator.audit_log"
+        assert cfg["ingestion_audit_table"] == "silver_sandbox.accelerator.ingestion_audit_log"
+
+    def test_two_part_names_skip_empty_catalog(self) -> None:
+        raw = self._raw()
+        raw["bronze_table"]["catalog"] = ""
+        raw["bronze_table"]["schema"] = "bronze"
+        raw["bronze_table"]["table_name"] = "customers"
+        cfg = _normalize_source_config(raw)
+        assert cfg["bronze_table"] == "bronze.customers"
+        assert cfg["silver_table"] == "silver.customers"
+        assert cfg["audit_table"] == "silver.audit_log"
+
+    def test_extraction_mode_and_filter_mapped(self) -> None:
+        cfg = _normalize_source_config(self._raw())
+        assert cfg["extraction"]["mode"] == "full_scan"
+        assert cfg["extraction"]["filter_column"] == "updated_at"
+
+    def test_incremental_mode_preserved(self) -> None:
+        raw = self._raw()
+        raw["extraction"]["mode"] = "incremental"
+        cfg = _normalize_source_config(raw)
+        assert cfg["extraction"]["mode"] == "incremental"
+
+    def test_schema_flattened_and_lowercased(self) -> None:
+        cfg = _normalize_source_config(self._raw())
+        assert cfg["schema"] == [
+            {"name": "id", "type": "string"},
+            {"name": "amount", "type": "double"},
+        ]
+
+    def test_primary_keys_from_bronze_block(self) -> None:
+        cfg = _normalize_source_config(self._raw())
+        assert cfg["primary_keys"] == ["id"]
+
+    def test_silver_sections_passed_through(self) -> None:
+        cfg = _normalize_source_config(self._raw())
+        assert cfg["deduplication"] == {"order_by": [{"column": "updated_at", "direction": "desc"}]}
+        assert cfg["dq_checks"] == [{"column": "id", "type": "not_null"}]
+        # Absent optional sections are not injected
+        assert "soft_delete" not in cfg
+        assert "transformations" not in cfg

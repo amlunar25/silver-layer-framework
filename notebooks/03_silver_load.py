@@ -15,8 +15,8 @@
 # COMMAND ----------
 
 # ── Config paths ──────────────────────────────────────────────────────────────
-dbutils.widgets.text("customer_config_path", "configs/entities/customer.yaml", "Customer – Config Path")
-dbutils.widgets.text("orders_config_path",   "configs/entities/orders.yaml",   "Orders – Config Path")
+dbutils.widgets.text("customer_config_path", "source_configs/sandbox/customer.yml", "Customer – Config Path")
+dbutils.widgets.text("orders_config_path",   "source_configs/sandbox/orders.yml",   "Orders – Config Path")
 dbutils.widgets.text("project_root", "/Workspace/Users/alexander.luna@factored.ai/silver-layer-framework", "Project Root")
 
 # ── Infrastructure ────────────────────────────────────────────────────────────
